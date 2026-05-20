@@ -46,10 +46,16 @@ function loadPipelineConfig(): PipelineConfig {
   try {
     const raw = localStorage.getItem(PIPELINE_CONFIG_KEY);
     if (!raw) return structuredClone(DEFAULT_PIPELINE_CONFIG);
+    // Deep-merge so an older saved config with missing sections (added in a
+    // later release) still loads with the new defaults filling the gaps.
     const parsed = JSON.parse(raw) as Partial<PipelineConfig>;
     return {
+      pipelineVersion: parsed.pipelineVersion ?? DEFAULT_PIPELINE_CONFIG.pipelineVersion,
+      engine: parsed.engine ?? DEFAULT_PIPELINE_CONFIG.engine,
+      device: parsed.device ?? DEFAULT_PIPELINE_CONFIG.device,
+      paddleocr: { ...DEFAULT_PIPELINE_CONFIG.paddleocr, ...(parsed.paddleocr ?? {}) },
+      vlm: { ...DEFAULT_PIPELINE_CONFIG.vlm, ...(parsed.vlm ?? {}) },
       gliner: { ...DEFAULT_PIPELINE_CONFIG.gliner, ...(parsed.gliner ?? {}) },
-      ocr: { ...DEFAULT_PIPELINE_CONFIG.ocr, ...(parsed.ocr ?? {}) },
     };
   } catch {
     return structuredClone(DEFAULT_PIPELINE_CONFIG);
