@@ -146,3 +146,103 @@ else needs it.
 Once parity is reached, edit the "Open item — model parity" warning in
 the root `README.md` to "Resolved" and link to this file (`TODO.md`) for
 the conversion record.
+
+---
+
+## 7. Backend: wire the Settings drawer config into `app.py`
+
+The Settings drawer in the frontend already collects every output-level
+knob a user can tweak. Right now only `pipelineConfig.gliner.threshold`
+and `enabledLabels` reach the mock engine; the real Python backend
+ignores everything else. To finish parity:
+
+### 7.1 Pass `PipelineConfig` through the Gradio API
+
+- `frontend/src/lib/api.ts::anonymizeScreenshot` — add a second argument
+  `config` and forward it as JSON in the
+  `client.predict('/anonymize_screenshot', { image, config })` call.
+- `backend/server.py::anonymize_screenshot_api(image, config_json: str)`
+  — parse the JSON, pass to `app.run_pii_analysis` + `ocr_image`.
+
+### 7.2 PaddleOCR knobs from `pipelineConfig.paddleocr`
+
+`backend/app.py::get_ocr` is a singleton, so flags can't change after
+boot. Refactor to either:
+
+- Re-instantiate `PaddleOCR(...)` when the relevant flags change, or
+- Pass overrides to `pipeline.predict(arr, use_doc_orientation_classify=…,
+  use_doc_unwarping=…, use_textline_orientation=…, layout_threshold=…)`
+  per request (PaddleOCR 3.5 accepts per-call overrides).
+
+Fields to wire:
+
+- `layoutThreshold`
+- `useDocOrientationClassify`
+- `useDocUnwarping`
+- `useTextlineOrientation`
+- `useChartRecognition`
+- `useSealRecognition`
+- `useOcrForImageBlock`
+
+### 7.3 GLiNER2 knobs from `pipelineConfig.gliner`
+
+In `backend/app.py::run_pii_analysis` (today hard-codes `threshold=0.5`
+and the global `PII_LABELS` dict):
+
+```python
+def run_pii_analysis(text, config):
+    labels = config["enabledLabels"] or DEFAULT_PII_LABELS
+    descriptions = {
+        k: config["descriptions"].get(k, DEFAULT_DESC[k]) for k in labels
+    }
+    result = model.extract_entities(
+        text,
+        descriptions,                       # was the global PII_LABELS
+        threshold=config["threshold"],      # was 0.5
+        include_spans=True,
+        include_confidence=True,
+    )
+    return _apply_label_rules(text, result, config["rules"])
+```
+
+### 7.4 `_apply_label_rules` — the post-filter ladder
+
+The drawer's four per-label knobs (see `LabelRule` in
+`frontend/src/lib/types.ts`) all run *after* GLiNER2 returns candidates:
+
+1. **Per-label threshold** — drop `span.confidence < rule.threshold`
+   when `rule.threshold > 0`.
+2. **Regex** — `re.fullmatch` / `re.search` / `not re.search` depending
+   on `rule.regexMode`. Catch `re.error` so a bad pattern doesn't crash
+   the request; log + skip the rule on parse failure.
+3. **Luhn** — only when `rule.validateLuhn` is true *and* the matched
+   text is digit-only after stripping `[-+ ]`. Standard right-to-left:
+
+   ```python
+   def luhn_ok(digits: str) -> bool:
+       total = 0
+       for i, ch in enumerate(reversed(digits)):
+           d = int(ch)
+           if i % 2 == 1:
+               d *= 2
+               if d > 9: d -= 9
+           total += d
+       return total % 10 == 0
+   ```
+
+   Personnummer needs the separator stripped first
+   (`850315-2389` → `8503152389`).
+
+### 7.5 VLM sampling knobs from `pipelineConfig.vlm`
+
+Today the backend uses PaddleOCR-VL defaults. Forward `temperature`,
+`topP`, `repetitionPenalty`, `maxNewTokens`, `minPixels`, `maxPixels`
+to `pipeline.predict(...)`. PaddleOCR-VL 1.5 accepts all of them per
+call (see the official PaddleOCR-VL usage tutorial).
+
+### 7.6 Migrate the local engine too (later)
+
+When the Tauri build finally uses on-device transformers.js / GLiNER2
+WASM, the same `PipelineConfig` shape needs to reach
+`frontend/src/lib/engine/worker.ts`. The seam already exists
+(`AnalyzeOptions.config`); the worker just ignores the field today.

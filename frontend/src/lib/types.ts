@@ -87,7 +87,7 @@ export type PipelineConfig = {
   gliner: {
     /** Hugging Face model id or local path. */
     modelName: string;
-    /** Confidence floor (0..1). Hits below this are dropped. */
+    /** Global confidence floor (0..1). Per-label overrides win when > 0. */
     threshold: number;
     /** Label keys to detect. Empty array = use the engine's default. */
     enabledLabels: string[];
@@ -99,7 +99,32 @@ export type PipelineConfig = {
      * appear verbatim in the model's training data.
      */
     descriptions: Record<string, string>;
+    /** Per-label post-filters. See {@link LabelRule}. */
+    rules: Record<string, LabelRule>;
   };
+};
+
+/** How a per-label regex applies to the candidate text. */
+export type RegexMode = 'full' | 'partial' | 'exclude';
+
+/**
+ * Per-label post-filter applied *after* GLiNER2 emits candidate spans.
+ * Empty fields = no filter. These are precision knobs only — they reject
+ * false positives but never invent matches the model didn't propose.
+ */
+export type LabelRule = {
+  /** Regex pattern applied to the matched text. Empty = no regex filter. */
+  regex: string;
+  /**
+   * full     - the entire span text must match the regex.
+   * partial  - the regex must match somewhere inside the span.
+   * exclude  - drop the span if the regex matches.
+   */
+  regexMode: RegexMode;
+  /** Per-label confidence override (0..1). 0 = inherit the global threshold. */
+  threshold: number;
+  /** Run a Luhn checksum on digit-only spans (personnummer / card_number). */
+  validateLuhn: boolean;
 };
 
 export const DEFAULT_PII_LABELS = [
@@ -117,6 +142,76 @@ export const DEFAULT_PII_LABELS = [
   'ip_address',
   'username',
 ] as const;
+
+/** Empty rule (default for labels without a useful regex). */
+export const EMPTY_LABEL_RULE: LabelRule = {
+  regex: '',
+  regexMode: 'full',
+  threshold: 0,
+  validateLuhn: false,
+};
+
+/**
+ * Default per-label rules tuned for Swedish PII. Each pattern is a
+ * conservative *post-filter*: GLiNER2 proposes the span, the regex rejects
+ * obvious false positives. Names / addresses / dates have no regex because
+ * regex can't validate "is this a name."
+ */
+export const DEFAULT_LABEL_RULES: Record<string, LabelRule> = {
+  person: { ...EMPTY_LABEL_RULE },
+  email: {
+    regex: '^[\\w.+-]+@[\\w.-]+\\.\\w+$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  phone_number: {
+    regex: '^\\+?\\d[\\d\\s-]{6,}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  address: { ...EMPTY_LABEL_RULE },
+  date_of_birth: { ...EMPTY_LABEL_RULE },
+  personnummer: {
+    regex: '^\\d{6,8}[-+]\\d{4}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  organisationsnummer: {
+    regex: '^\\d{6}-\\d{4}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  bank_account: {
+    regex: '^\\d{3,4}-\\d{3,4}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  iban: {
+    regex: '^[A-Z]{2}\\d{2}[A-Z0-9]+$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  card_number: {
+    regex: '^(\\d[ -]?){13,19}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  url: { regex: '^https?://', regexMode: 'partial', threshold: 0, validateLuhn: false },
+  ip_address: {
+    regex: '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    regexMode: 'full',
+    threshold: 0,
+    validateLuhn: false,
+  },
+  username: { ...EMPTY_LABEL_RULE },
+};
 
 /**
  * Default GLiNER2 label descriptions. Match `PII_LABELS` in `backend/app.py`
@@ -163,6 +258,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     threshold: 0.5,
     enabledLabels: [...DEFAULT_PII_LABELS],
     descriptions: { ...DEFAULT_LABEL_DESCRIPTIONS },
+    rules: structuredClone(DEFAULT_LABEL_RULES),
   },
 };
 

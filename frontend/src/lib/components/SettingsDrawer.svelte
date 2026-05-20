@@ -1,7 +1,13 @@
 <script lang="ts">
 import { Play, RotateCcw, RotateCw, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
-import { DEFAULT_LABEL_DESCRIPTIONS, DEFAULT_PII_LABELS } from '$lib/types';
+import {
+  DEFAULT_LABEL_DESCRIPTIONS,
+  DEFAULT_LABEL_RULES,
+  DEFAULT_PII_LABELS,
+  EMPTY_LABEL_RULE,
+  type RegexMode,
+} from '$lib/types';
 import { Button } from '$lib/components/ui/button';
 import CollapsibleSection from './CollapsibleSection.svelte';
 import PipelineSketch from './PipelineSketch.svelte';
@@ -41,6 +47,61 @@ function setDescription(label: string, value: string): void {
 function resetDescription(label: string): void {
   setDescription(label, DEFAULT_LABEL_DESCRIPTIONS[label] ?? '');
 }
+
+function ruleFor(label: string) {
+  return editor.pipelineConfig.gliner.rules[label] ?? { ...EMPTY_LABEL_RULE };
+}
+
+function patchRule(label: string, patch: Partial<typeof EMPTY_LABEL_RULE>): void {
+  editor.pipelineConfig.gliner.rules = {
+    ...editor.pipelineConfig.gliner.rules,
+    [label]: { ...ruleFor(label), ...patch },
+  };
+  persist();
+}
+
+function resetRule(label: string): void {
+  patchRule(label, DEFAULT_LABEL_RULES[label] ?? EMPTY_LABEL_RULE);
+}
+
+/**
+ * Quick "does this string match?" preview shown next to the regex field.
+ * Returns:
+ *   'ok'      regex parses and would let example text through
+ *   'reject'  regex parses but the example would be filtered out
+ *   'invalid' regex itself is not parseable
+ *   'empty'   no regex set
+ */
+function regexProbe(rule: ReturnType<typeof ruleFor>, sample: string): 'ok' | 'reject' | 'invalid' | 'empty' {
+  if (!rule.regex.trim()) return 'empty';
+  try {
+    const re = new RegExp(rule.regex);
+    const matches =
+      rule.regexMode === 'full' ? re.test(sample) && (re.exec(sample)?.[0]?.length ?? 0) === sample.length
+      : rule.regexMode === 'partial' ? re.test(sample)
+      : !re.test(sample); // exclude
+    return matches ? 'ok' : 'reject';
+  } catch {
+    return 'invalid';
+  }
+}
+
+/** Tiny realistic Swedish sample per label, used by the preview chip. */
+const SAMPLES: Record<string, string> = {
+  person: 'Sven Andersson',
+  email: 'sven.andersson@exempel.se',
+  phone_number: '+46 70-123 45 67',
+  address: 'Sveavägen 12, 113 57 Stockholm',
+  date_of_birth: '1985-03-15',
+  personnummer: '850315-2389',
+  organisationsnummer: '556677-1234',
+  bank_account: '5050-1055',
+  iban: 'SE3550000000054910000003',
+  card_number: '4111 1111 1111 1111',
+  url: 'https://ranymizer.dev',
+  ip_address: '192.168.1.1',
+  username: 'sven_a',
+};
 
 function applyAndRun(): Promise<void> {
   close();
@@ -166,42 +227,175 @@ const rowToggleCls =
         </div>
       </CollapsibleSection>
 
-      <!-- ─── Label descriptions ─────────────────────────────────────── -->
-      <CollapsibleSection title="Label descriptions" expanded={false}>
-        <p class="mb-3 text-[10.5px] leading-relaxed text-muted-foreground">
-          GLiNER2 is label-conditioned: each description is a soft prompt
-          telling the model what to look for. Edit these to improve recall on
-          Swedish-specific identifiers (personnummer, organisationsnummer,
-          bankgiro) — the model has not seen those formats during training.
-        </p>
-        <div class="flex flex-col gap-3">
+      <!-- ─── Label rules ────────────────────────────────────────────── -->
+      <CollapsibleSection title="Label rules" expanded={false}>
+        <div
+          class="mb-3 flex flex-col gap-1.5 rounded-md border border-border bg-background/60 p-3 text-[10.5px] leading-relaxed text-muted-foreground"
+        >
+          <p>
+            Each label has up to four knobs. They run in this order on every
+            candidate the model proposes:
+          </p>
+          <ol class="ml-4 list-decimal space-y-0.5">
+            <li>
+              <span class="text-foreground">Description</span> — the soft prompt
+              the model gets ("look for things that match this English sentence").
+              Better description = better recall.
+            </li>
+            <li>
+              <span class="text-foreground">Min confidence</span> — drop spans
+              the model is unsure about. <span class="font-mono">0</span> = use
+              the global threshold above.
+            </li>
+            <li>
+              <span class="text-foreground">Regex</span> — a final sanity check
+              on the matched text. <span class="font-mono">full</span> matches the
+              whole span, <span class="font-mono">partial</span> matches anywhere,
+              <span class="font-mono">exclude</span> rejects the span if it
+              matches. Empty = no filter.
+            </li>
+            <li>
+              <span class="text-foreground">Luhn checksum</span> — only useful
+              for personnummer and credit cards. Reject digit-only spans whose
+              Luhn check fails.
+            </li>
+          </ol>
+          <p class="pt-1">
+            None of these can <em>invent</em> hits — they only reject false
+            positives the model already produced.
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-4">
           {#each DEFAULT_PII_LABELS as label (label)}
-            <div class="flex flex-col gap-1">
+            {@const rule = ruleFor(label)}
+            {@const effThreshold =
+              rule.threshold > 0 ? rule.threshold : editor.pipelineConfig.gliner.threshold}
+            {@const sample = SAMPLES[label] ?? ''}
+            {@const probe = regexProbe(rule, sample)}
+
+            <div class="flex flex-col gap-2 rounded-md border border-border bg-background/40 p-3">
+              <!-- Row header -->
               <div class="flex items-center gap-2">
                 <span
                   class="h-3.5 w-[3px] shrink-0 rounded-[1.5px]"
                   style:background={editor.catMeta[label]?.color ?? '#888'}
                 ></span>
-                <span class="flex-1 text-[12px] font-medium text-foreground">
+                <span class="flex-1 text-[12.5px] font-medium text-foreground">
                   {editor.catMeta[label]?.label ?? label}
                 </span>
                 <button
                   type="button"
-                  class="rounded-sm p-1 text-text3 transition-colors hover:bg-surface2 hover:text-foreground"
-                  onclick={() => resetDescription(label)}
-                  title="Reset to default description"
-                  aria-label="Reset description"
+                  class="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-[10px] text-text3 transition-colors hover:bg-surface2 hover:text-foreground"
+                  onclick={() => {
+                    resetDescription(label);
+                    resetRule(label);
+                  }}
+                  title="Reset description + regex + threshold + Luhn to defaults"
                 >
                   <RotateCw class="h-3 w-3" />
+                  reset
                 </button>
               </div>
-              <textarea
-                rows="2"
-                class="min-w-0 resize-y rounded-sm border border-border bg-background px-2 py-1 text-[12px] leading-snug text-foreground outline-none focus:border-primary"
-                value={descriptionFor(label)}
-                oninput={(e) =>
-                  setDescription(label, (e.currentTarget as HTMLTextAreaElement).value)}
-              ></textarea>
+
+              <!-- 1. Description -->
+              <label class="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                <span>1 — Description (the prompt GLiNER2 sees)</span>
+                <textarea
+                  rows="2"
+                  class="min-w-0 resize-y rounded-sm border border-border bg-background px-2 py-1 text-[12px] leading-snug text-foreground outline-none focus:border-primary"
+                  value={descriptionFor(label)}
+                  oninput={(e) =>
+                    setDescription(label, (e.currentTarget as HTMLTextAreaElement).value)}
+                ></textarea>
+              </label>
+
+              <!-- 2. Per-label threshold -->
+              <label class="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                <div class="flex items-center justify-between">
+                  <span>2 — Min confidence (override)</span>
+                  <span class="font-mono tabular-nums text-foreground">
+                    {rule.threshold === 0
+                      ? `${effThreshold.toFixed(2)} (global)`
+                      : rule.threshold.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="0.95"
+                  step="0.05"
+                  value={rule.threshold}
+                  oninput={(e) =>
+                    patchRule(label, {
+                      threshold: Number((e.currentTarget as HTMLInputElement).value),
+                    })}
+                  class="accent-primary"
+                />
+                <span class="text-[10.5px] text-text3">
+                  Slide to <span class="font-mono">0</span> to use the global threshold above.
+                </span>
+              </label>
+
+              <!-- 3. Regex post-filter -->
+              <div class="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                <span>3 — Regex post-filter</span>
+                <div class="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    class="min-w-0 flex-1 rounded-sm border border-border bg-background px-2 py-1 font-mono text-[11px] text-foreground outline-none focus:border-primary"
+                    placeholder="(leave empty for no filter)"
+                    value={rule.regex}
+                    oninput={(e) =>
+                      patchRule(label, { regex: (e.currentTarget as HTMLInputElement).value })}
+                  />
+                  <select
+                    class="rounded-sm border border-border bg-background px-1 py-1 text-[11px] text-foreground"
+                    value={rule.regexMode}
+                    onchange={(e) =>
+                      patchRule(label, {
+                        regexMode: (e.currentTarget as HTMLSelectElement).value as RegexMode,
+                      })}
+                  >
+                    <option value="full">full</option>
+                    <option value="partial">partial</option>
+                    <option value="exclude">exclude</option>
+                  </select>
+                </div>
+                {#if sample}
+                  <div class="mt-0.5 flex items-center gap-2 text-[10.5px]">
+                    <span class="text-text3">Preview on</span>
+                    <code class="rounded-sm bg-background px-1 py-px font-mono text-foreground">
+                      {sample}
+                    </code>
+                    {#if probe === 'ok'}
+                      <span class="text-emerald-400">✓ would pass</span>
+                    {:else if probe === 'reject'}
+                      <span class="text-amber-500">✗ would be filtered out</span>
+                    {:else if probe === 'invalid'}
+                      <span class="text-destructive">⚠ regex is invalid</span>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+
+              <!-- 4. Luhn checksum (only shown when relevant by default; toggle present always) -->
+              <label class="flex items-start gap-2 rounded-sm border border-border bg-transparent px-2 py-1.5 text-[11.5px] text-foreground hover:bg-surface2">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 accent-primary"
+                  checked={rule.validateLuhn}
+                  onchange={() => patchRule(label, { validateLuhn: !rule.validateLuhn })}
+                />
+                <span class="flex-1">
+                  4 — Validate Luhn checksum
+                  <span class="block font-mono text-[10px] text-text3">
+                    Recommended for <span class="text-foreground">personnummer</span> and
+                    <span class="text-foreground">card_number</span>; rejects digit-only spans
+                    that fail the Luhn check. Ignored when the matched text isn't all digits.
+                  </span>
+                </span>
+              </label>
             </div>
           {/each}
         </div>

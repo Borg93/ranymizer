@@ -55,11 +55,15 @@ function loadPipelineConfig(): PipelineConfig {
       gliner: {
         ...DEFAULT_PIPELINE_CONFIG.gliner,
         ...(parsed.gliner ?? {}),
-        // Per-label descriptions can grow over time; always start from the
-        // default map so new labels show up even if the saved blob is older.
+        // Per-label maps can grow over time; always start from the default
+        // map so new labels show up even when the saved blob is older.
         descriptions: {
           ...DEFAULT_PIPELINE_CONFIG.gliner.descriptions,
           ...(parsed.gliner?.descriptions ?? {}),
+        },
+        rules: {
+          ...DEFAULT_PIPELINE_CONFIG.gliner.rules,
+          ...(parsed.gliner?.rules ?? {}),
         },
       },
     };
