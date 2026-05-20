@@ -350,33 +350,36 @@ function onKeyDown(e: KeyboardEvent) {
         <Redo2 class="h-3.5 w-3.5" />
       </Button>
 
-      <Button
-        variant="default"
-        size="sm"
-        class="h-7 gap-1.5 px-2"
-        disabled={!editor.hasImage || editor.loading}
-        onclick={() => editor.run()}
-        title="Run the pipeline on all pages with the current settings"
-      >
-        {#if editor.loading}
-          <Spinner class="h-3.5 w-3.5" />
-          <span class="text-[12px] font-medium tracking-tight">Running…</span>
-        {:else}
-          <Play class="h-3.5 w-3.5" />
-          <span class="text-[12px] font-medium tracking-tight">Run</span>
-        {/if}
-      </Button>
-
-      <Button
-        variant="secondary"
-        size="sm"
-        class="h-7 w-7 border border-border p-0 text-foreground"
-        onclick={() => (editor.settingsOpen = !editor.settingsOpen)}
-        aria-label="Pipeline settings"
-        title="Pipeline settings"
-      >
-        <Settings2 class="h-3.5 w-3.5" />
-      </Button>
+      <!-- Run + Settings live in a connected pill so they read as the
+           primary call-to-action of the whole navbar. -->
+      <div class="ml-1 flex items-stretch overflow-hidden rounded-md ring-1 ring-primary/40 shadow-[0_0_0_3px_var(--color-accent-bg)]">
+        <Button
+          variant="default"
+          size="sm"
+          class="h-8 gap-1.5 rounded-none px-3 text-[12.5px] font-semibold tracking-tight"
+          disabled={!editor.hasImage || editor.loading}
+          onclick={() => editor.run()}
+          title="Run the pipeline on all pages with the current settings (⌘↩)"
+        >
+          {#if editor.loading}
+            <Spinner class="h-3.5 w-3.5" />
+            <span>Running…</span>
+          {:else}
+            <Play class="h-3.5 w-3.5" />
+            <span>Run</span>
+          {/if}
+        </Button>
+        <button
+          type="button"
+          class="flex h-8 items-center gap-1 border-l border-primary-foreground/20 bg-primary px-2 text-[12px] font-medium tracking-tight text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          onclick={() => (editor.settingsOpen = !editor.settingsOpen)}
+          aria-label="Pipeline settings"
+          title="Pipeline settings"
+        >
+          <Settings2 class="h-3.5 w-3.5" />
+          <span class="hidden sm:inline">Settings</span>
+        </button>
+      </div>
 
       <Button
         variant="secondary"
