@@ -188,13 +188,33 @@ const categoryRows = $derived(
       class="mt-1.5 flex w-full items-center gap-2 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-left transition-colors hover:bg-surface2 data-[active=true]:border-primary data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
       data-active={editor.showCategoryColors}
       onclick={() => (editor.showCategoryColors = !editor.showCategoryColors)}
-      title="Preview-only — exports still use solid black bars"
+      title="Preview-only — exports always use solid bars"
     >
       <Palette class="h-3.5 w-3.5" />
       <span class="flex-1 text-[12.5px] font-medium tracking-tight">Color masks</span>
     </button>
 
     {#if editor.showCategoryColors}
+      <!-- Unified | Per-category -->
+      <div class="mt-2 grid grid-cols-2 gap-1 rounded-md border border-border bg-background p-0.5">
+        <button
+          type="button"
+          class="rounded-sm py-1 text-[11px] tracking-tight transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+          data-active={editor.colorMaskMode === 'unified'}
+          onclick={() => (editor.colorMaskMode = 'unified')}
+        >
+          Unified
+        </button>
+        <button
+          type="button"
+          class="rounded-sm py-1 text-[11px] tracking-tight transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+          data-active={editor.colorMaskMode === 'per-category'}
+          onclick={() => (editor.colorMaskMode = 'per-category')}
+        >
+          Per category
+        </button>
+      </div>
+
       <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
         <span class="w-12 shrink-0">Opacity</span>
         <input
@@ -209,23 +229,23 @@ const categoryRows = $derived(
           {Math.round(editor.maskAlpha * 100)}%
         </span>
       </label>
-    {/if}
 
-    <!-- Solid mask color (used when color masks is off, and always for the
-         exported PNG). -->
-    <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
-      <span class="w-12 shrink-0">Mask</span>
-      <input
-        type="color"
-        bind:value={editor.maskColor}
-        class="h-6 w-9 cursor-pointer rounded border border-border bg-transparent p-0.5"
-        aria-label="Mask color"
-        title="Mask color (also applied to the exported PNG)"
-      />
-      <span class="flex-1 font-mono text-[10.5px] uppercase tabular-nums text-foreground">
-        {editor.maskColor}
-      </span>
-    </label>
+      {#if editor.colorMaskMode === 'unified'}
+        <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+          <span class="w-12 shrink-0">Color</span>
+          <input
+            type="color"
+            bind:value={editor.maskColor}
+            class="h-6 w-9 cursor-pointer rounded border border-border bg-transparent p-0.5"
+            aria-label="Mask color"
+            title="Unified mask color (also used by the exported PNG)"
+          />
+          <span class="flex-1 font-mono text-[10.5px] uppercase tabular-nums text-foreground">
+            {editor.maskColor}
+          </span>
+        </label>
+      {/if}
+    {/if}
   </section>
 
   <!-- Box category: re-labels the selected box, or pre-sets the category

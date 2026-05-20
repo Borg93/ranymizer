@@ -82,15 +82,18 @@ function paint(node: Element) {
     }
 
     if (editor.showCategoryColors) {
-      // Preview mode — paint each box with its category color at maskAlpha so
-      // the underlying image is partially visible. Custom boxes use a neutral
-      // grey since they have no semantic category.
+      // Preview — translucent fill so the underlying image stays partly
+      // visible. Either per-category colour or a unified swatch colour.
       ctx.save();
       ctx.globalAlpha = editor.maskAlpha;
+      const usePerCategory = editor.colorMaskMode === 'per-category';
       for (const b of editor.boxes) {
         if (!editor.isVisible(b)) continue;
-        const color = b.custom ? '#9ca3af' : (editor.catMeta[b.label]?.color ?? '#9ca3af');
-        ctx.fillStyle = color;
+        if (usePerCategory) {
+          ctx.fillStyle = b.custom ? '#9ca3af' : (editor.catMeta[b.label]?.color ?? '#9ca3af');
+        } else {
+          ctx.fillStyle = editor.maskColor;
+        }
         ctx.fillRect(b.x, b.y, b.w, b.h);
       }
       ctx.restore();

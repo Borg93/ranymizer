@@ -77,12 +77,16 @@ export class EditorState {
   boxes = $state<EditorBox[]>([]);
   ocrLines = $state<OcrLine[]>([]);
   showOcrLines = $state(false);
-  // Preview-only: paint boxes with category colors at maskAlpha so users can
-  // see *why* each region was redacted. Never applied to the export canvas.
+  // Preview-only: paint boxes translucently so users can see *why* each
+  // region was redacted. Never applied to the export canvas (the PNG always
+  // uses solid `maskColor`).
+  //   showCategoryColors = on  → paint preview at maskAlpha
+  //   colorMaskMode = 'unified'      → all boxes in maskColor
+  //   colorMaskMode = 'per-category' → each box in its category colour
   showCategoryColors = $state(false);
+  colorMaskMode = $state<'unified' | 'per-category'>('per-category');
   maskAlpha = $state(0.6);
-  // Solid mask color used when `showCategoryColors` is off and in the export
-  // (the downloaded PNG always uses this color, never the per-category tint).
+  // Solid mask color used in the unified preview and always for the export PNG.
   maskColor = $state('#000000');
   // Default category for the next drawn box.
   drawLabel = $state('custom');
