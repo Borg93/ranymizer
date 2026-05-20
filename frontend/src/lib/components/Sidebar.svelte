@@ -1,5 +1,5 @@
 <script lang="ts">
-import { Copy, Download, HelpCircle, MousePointer2, Palette, ScanText, Square } from 'lucide-svelte';
+import { Copy, Download, MousePointer2, Palette, ScanText, Square } from 'lucide-svelte';
 import ShortcutHelp from './ShortcutHelp.svelte';
 
 let helpOpen = $state(false);
@@ -100,16 +100,18 @@ const categoryRows = $derived(
   </div>
   <!-- Tool -->
   <section class="border-b border-border px-4 py-3.5">
-    <div class="mb-2 flex items-center text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
+    <div class="mb-2 flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
       <span class="flex-1">Tool</span>
       <button
         type="button"
-        class="rounded-md p-0.5 text-text3 transition-colors hover:bg-surface2 hover:text-foreground"
+        class="flex items-center gap-1.5 rounded-md border border-border bg-card px-1.5 py-0.5 normal-case tracking-normal text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
         onclick={() => (helpOpen = true)}
-        aria-label="Keyboard shortcuts"
-        title="Keyboard shortcuts (?)"
+        title="Show all keyboard shortcuts (press ? anywhere)"
       >
-        <HelpCircle class="h-3.5 w-3.5" />
+        <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px] text-foreground">
+          ?
+        </kbd>
+        <span class="text-[10.5px]">Shortcuts</span>
       </button>
     </div>
 
