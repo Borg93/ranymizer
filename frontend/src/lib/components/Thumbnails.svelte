@@ -22,12 +22,11 @@ $effect(() => {
       <button
         type="button"
         data-idx={i}
-        class="group relative h-full shrink-0 overflow-hidden rounded-md border bg-background transition-colors data-[active=true]:border-primary"
+        class="group relative h-full w-[96px] shrink-0 overflow-hidden rounded-md border bg-background transition-colors data-[active=true]:border-primary"
         class:border-border={editor.activeIdx !== i}
         data-active={editor.activeIdx === i}
         onclick={() => editor.goTo(i)}
         title={p.filename}
-        style:aspect-ratio={`${p.width}/${p.height}`}
       >
         <img src={p.objectUrl} alt={p.filename} class="h-full w-full object-cover" />
         <span

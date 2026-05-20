@@ -159,7 +159,7 @@ function displayLabelFor(label: string): string {
         type="search"
         bind:value={query}
         placeholder="Search text or category"
-        class="w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-7 text-[12px] text-foreground outline-none focus:border-primary"
+        class="search-input w-full rounded-md border border-border bg-background py-1.5 pl-7 pr-7 text-[12px] text-foreground outline-none focus:border-primary"
       />
       {#if query}
         <button
@@ -276,7 +276,6 @@ function displayLabelFor(label: string): string {
               </button>
 
               <div class="flex flex-wrap items-center gap-1 text-[10.5px] text-text3">
-                <span class="font-mono lowercase">{displayLabelFor(r.label)}</span>
                 {#if isOverlap}
                   <span
                     class="flex items-center gap-0.5 rounded bg-amber-500/10 px-1 py-0.5 text-[9.5px] text-amber-500"
@@ -350,6 +349,14 @@ function displayLabelFor(label: string): string {
 </aside>
 
 <style>
+  /* Hide the native WebKit / Chromium search clear button so only our
+     custom one shows. */
+  .search-input::-webkit-search-cancel-button,
+  .search-input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   .resize-handle .grip {
     width: 2px;
     height: 28px;
