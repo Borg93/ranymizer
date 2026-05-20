@@ -1,15 +1,9 @@
 """
-server.py — Gradio Server backend for the Swedish Ranymizer.
+Gradio Server backend for the Swedish Ranymizer.
 
 Same pattern as the BiRefNet demo: gr.Server() with @server.api(...) for the
 queued compute endpoint, plain @server.get for static reads, plus a static-file
 mount for the SvelteKit build.
-
-Layout (paths resolved from the project root, i.e. ../ relative to here):
-  ../backend/app.py     — model + pipeline code
-  ../backend/server.py  — this file
-  ../frontend/build/    — output of `bun run build` (SvelteKit adapter-static)
-  ../example-images/    — drop screenshots here, they appear on the landing page
 
 Routes:
   GET  /                          → frontend/build/index.html
@@ -41,39 +35,37 @@ from app import (
     run_pii_analysis,
 )
 
-HERE = Path(__file__).resolve().parent  # backend/
+HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
 EXAMPLES_DIR = PROJECT_ROOT / "example-images"
 BUILD_DIR = PROJECT_ROOT / "frontend" / "build"
-EXAMPLE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+THUMBNAIL_SIZE = (480, 480)
+THUMBNAIL_QUALITY = 82
 
 
-def _list_examples() -> list[str]:
+def _is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def list_example_images() -> list[str]:
     if not EXAMPLES_DIR.is_dir():
         return []
-    return sorted(
-        p.name for p in EXAMPLES_DIR.iterdir() if p.is_file() and p.suffix.lower() in EXAMPLE_EXTS
-    )
+    return sorted(p.name for p in EXAMPLES_DIR.iterdir() if _is_image_file(p))
 
 
 @functools.lru_cache(maxsize=64)
-def _example_thumbnail(name: str) -> bytes:
-    path = EXAMPLES_DIR / name
-    img = Image.open(path).convert("RGB")
-    img.thumbnail((480, 480))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=82, optimize=True)
-    return buf.getvalue()
+def build_thumbnail(name: str) -> bytes:
+    image = Image.open(EXAMPLES_DIR / name).convert("RGB")
+    image.thumbnail(THUMBNAIL_SIZE)
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
+    return buffer.getvalue()
 
-
-# =====================================================================
-# SERVER
-# =====================================================================
 
 server = gr.Server()
 
-# Open CORS so the SvelteKit dev server (vite, :5173) can talk to us on :7860.
-# In prod everything is same-origin and this is a no-op.
+# CORS for local SvelteKit dev (vite on :5173/:5174). Production is same-origin.
 server.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -88,58 +80,56 @@ server.add_middleware(
 )
 
 
-# ── Examples (plain GET, no queue) ──────────────────────────────────
 @server.get("/api/examples")
 async def api_examples():
-    return JSONResponse({"examples": _list_examples()})
+    return JSONResponse({"examples": list_example_images()})
 
 
 @server.get("/examples/{name}")
 async def get_example(name: str, thumb: int = 0):
-    safe = Path(name).name
-    if Path(safe).suffix.lower() not in EXAMPLE_EXTS:
+    safe_name = Path(name).name
+    if Path(safe_name).suffix.lower() not in IMAGE_EXTENSIONS:
         return JSONResponse({"error": "invalid file type"}, 400)
-    path = EXAMPLES_DIR / safe
+
+    path = EXAMPLES_DIR / safe_name
     if not path.is_file():
         return JSONResponse({"error": "not found"}, 404)
+
     if thumb:
         return Response(
-            content=_example_thumbnail(safe),
+            content=build_thumbnail(safe_name),
             media_type="image/jpeg",
             headers={"Cache-Control": "public, max-age=86400"},
         )
     return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
 
 
-# ── Static category table (small, cacheable, hit once on app boot) ──
 @server.get("/api/meta")
 async def api_meta():
+    categories = {
+        key: {"color": meta["color"], "label": meta["label"]}
+        for key, meta in CATEGORIES_META.items()
+    }
     return JSONResponse(
-        {
-            "categories_meta": {
-                k: {"color": v["color"], "label": v["label"]} for k, v in CATEGORIES_META.items()
-            }
-        },
+        {"categories_meta": categories},
         headers={"Cache-Control": "public, max-age=3600"},
     )
 
 
-# ── Queued compute endpoint ─────────────────────────────────────────
+def _ocr_line_to_debug_overlay(line: dict) -> dict:
+    return {"text": line["text"], "x": line["x"], "y": line["y"], "w": line["w"], "h": line["h"]}
+
+
 @server.api(name="anonymize_screenshot")
 def anonymize_screenshot_api(image: FileData) -> dict:
-    """OCR + PII over an uploaded image.
-
-    Returns JSON only — the original image stays on the client (it already
-    has the File). Same FileData-in pattern as the BiRefNet demo; the
-    @gradio/client wraps FormData uploads for us.
-    """
+    """OCR + PII over an uploaded image. JSON-only response (client keeps the original)."""
     try:
         path = image.get("path") or image.get("url") or ""
         if not path:
             return {"error": "expected an image file"}
 
-        img = Image.open(path).convert("RGB")
-        ocr = ocr_image(img)
+        pil_image = Image.open(path).convert("RGB")
+        ocr = ocr_image(pil_image)
 
         spans: list = []
         boxes: list = []
@@ -149,53 +139,44 @@ def anonymize_screenshot_api(image: FileData) -> dict:
                 spans = [s for s in spans if s["end"] <= len(ocr["text"])]
             boxes = map_spans_to_boxes(ocr["words"], spans)
 
-        # OCR line geometry surfaced so the frontend can toggle a debug overlay
-        # showing what detection found (independent of PII recognition).
-        ocr_lines = [
-            {"text": w["text"], "x": w["x"], "y": w["y"], "w": w["w"], "h": w["h"]}
-            for w in ocr["words"]
-        ]
-
         return {
             "filename": Path(path).name,
-            "width": img.width,
-            "height": img.height,
+            "width": pil_image.width,
+            "height": pil_image.height,
             "boxes": boxes,
             "text": ocr["text"],
             "spans": spans,
-            "ocr_lines": ocr_lines,
+            "ocr_lines": [_ocr_line_to_debug_overlay(line) for line in ocr["words"]],
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
-        return {"error": f"{type(e).__name__}: {e}"}
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-# ── SvelteKit static build ──────────────────────────────────────────
 # adapter-static emits build/index.html (SPA fallback) + build/_app/<chunks>.
-# We mount /_app for the chunks and serve top-level files explicitly.
 if BUILD_DIR.is_dir():
-    app_dir = BUILD_DIR / "_app"
-    if app_dir.is_dir():
-        server.mount("/_app", StaticFiles(directory=app_dir), name="_app")
+    app_chunks_dir = BUILD_DIR / "_app"
+    if app_chunks_dir.is_dir():
+        server.mount("/_app", StaticFiles(directory=app_chunks_dir), name="_app")
 
     @server.get("/", response_class=HTMLResponse)
-    async def root():
+    async def serve_index():
         return (BUILD_DIR / "index.html").read_text(encoding="utf-8")
 
     @server.get("/favicon.svg")
-    async def favicon():
-        p = BUILD_DIR / "favicon.svg"
-        if p.is_file():
-            return FileResponse(p)
+    async def serve_favicon():
+        favicon = BUILD_DIR / "favicon.svg"
+        if favicon.is_file():
+            return FileResponse(favicon)
         return Response(status_code=404)
 else:
 
     @server.get("/", response_class=HTMLResponse)
-    async def root_dev():
+    async def serve_dev_hint():
         return (
             "<h1>frontend not built</h1>"
-            "<p>run <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code> "
-            "for production, or use <code>npm run dev</code> on port 5173.</p>"
+            "<p>run <code>cd frontend &amp;&amp; bun install &amp;&amp; bun run build</code> "
+            "for production, or use <code>bun run dev</code> on port 5173.</p>"
         )
 
 

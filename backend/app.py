@@ -1,15 +1,10 @@
 """
-app.py — OCR + PII pipeline for the Swedish Ranymizer prototype.
+OCR + PII pipeline for the Swedish Ranymizer.
 
-Pipeline:
-  1. PaddleOCR 3.5 (transformers backend, PP-OCRv5_server) → line-level text + polygons
-  2. GLiNER2-PII (label-conditioned encoder) → entity spans over text
-  3. Project char spans back to pixel boxes via OCR line geometry
-
-Public surface (matches the original Ranymizer):
-  - CATEGORIES_META    : per-label color + display label for the UI
-  - ocr_image(img)     : Image -> {text, words}   ("words" are OCR lines here)
-  - run_pii_analysis(text) -> (text, spans)
+Public surface:
+  - CATEGORIES_META         per-label colour + display label for the UI
+  - ocr_image(img)          Image -> {text, words}   (lines are surfaced as "words")
+  - run_pii_analysis(text)  text -> (text, spans)
   - map_spans_to_boxes(lines, spans) -> [boxes]
 """
 
@@ -21,55 +16,38 @@ from typing import Any
 import numpy as np
 import torch
 from gliner2 import GLiNER2
-
-# Real imports up front so failures surface at startup, not on first request.
-# Loading the actual models is still lazy (see get_ocr / get_gliner below).
 from paddleocr import PaddleOCR
 from PIL import Image
 
 try:
-    import spaces  # ZeroGPU; no-op locally
+    import spaces
 except ImportError:
     spaces = None
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Config
-# ──────────────────────────────────────────────────────────────────────
-REQUEST_GPU = os.getenv("USE_GPU", "1").lower() not in {"0", "false", "no"}
-HAS_CUDA = torch.cuda.is_available() or (spaces is not None)
-DEVICE = "gpu:0" if REQUEST_GPU and HAS_CUDA else "cpu"
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "1" if default else "0").lower()
+    return raw not in {"0", "false", "no"}
 
-# PaddleOCR 3.5 supports "5 major mainstream text types: Chinese, Pinyin,
-# Traditional Chinese, English, Japanese". For Western-European text we need
-# the Latin recognition model, which is auto-selected when lang is any
-# Latin-script language code (sv / de / fr / es / it / pt / …). Empirically
-# verified: lang="sv" -> latin_PP-OCRv5_mobile_rec.
+
+USE_GPU = _env_bool("USE_GPU", True)
+HAS_CUDA = torch.cuda.is_available() or (spaces is not None)
+DEVICE = "gpu:0" if USE_GPU and HAS_CUDA else "cpu"
+
+# `lang=sv` triggers PaddleOCR's `latin_PP-OCRv5_mobile_rec`, which covers
+# å/ä/ö. The default (no `lang`) loads the Chinese-trained recogniser and
+# silently emits `□` for any non-Chinese/-English/-Japanese glyph.
 OCR_LANG = os.getenv("OCR_LANG", "sv")
 
-# Optional preprocessing. Each costs a bit of latency but improves recall on
-# scanned / rotated / skewed pages — turn on when redacting real-world docs.
-USE_DOC_ORIENTATION_CLASSIFY = os.getenv("USE_DOC_ORIENTATION_CLASSIFY", "0").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-USE_DOC_UNWARPING = os.getenv("USE_DOC_UNWARPING", "0").lower() in {"1", "true", "yes"}
-USE_TEXTLINE_ORIENTATION = os.getenv("USE_TEXTLINE_ORIENTATION", "0").lower() in {
-    "1",
-    "true",
-    "yes",
-}
+USE_DOC_ORIENTATION_CLASSIFY = _env_bool("USE_DOC_ORIENTATION_CLASSIFY", False)
+USE_DOC_UNWARPING = _env_bool("USE_DOC_UNWARPING", False)
+USE_TEXTLINE_ORIENTATION = _env_bool("USE_TEXTLINE_ORIENTATION", False)
 
-# GLiNER2-PII model id.
 GLINER_MODEL = os.getenv("GLINER_MODEL", "fastino/gliner2-privacy-filter-PII-multi")
 
-# Label-conditioned schema. Descriptions are in English (the model has English +
-# Dutch/German/French/Italian/Spanish/Portuguese training); Swedish entity
-# *surface forms* are handled by the multilingual encoder. Swedish-specific
-# identifiers (personnummer, orgnr) need format hints in the description because
-# the model has not seen those formats during training — this is zero-shot until
-# you LoRA-tune. Expect modest recall on personnummer/orgnr out of the box.
+# Swedish-specific identifiers (personnummer, organisationsnummer) need format
+# hints because the model has never seen those during training — zero-shot
+# until LoRA fine-tuning lands. Expect modest recall out of the box.
 PII_LABELS: dict[str, str] = {
     "person": "Full name of a person",
     "email": "Email address",
@@ -86,7 +64,6 @@ PII_LABELS: dict[str, str] = {
     "username": "User name or login handle",
 }
 
-# Per-category metadata used by the frontend overlay.
 CATEGORIES_META: dict[str, dict[str, str]] = {
     "person": {"color": "#ef4444", "label": "Person"},
     "email": {"color": "#f97316", "label": "Email"},
@@ -104,58 +81,50 @@ CATEGORIES_META: dict[str, dict[str, str]] = {
 }
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Lazy model singletons
-# ──────────────────────────────────────────────────────────────────────
-_OCR = None
-_GLINER = None
+_ocr_instance: PaddleOCR | None = None
+_gliner_instance: GLiNER2 | None = None
 
 
 def get_ocr() -> PaddleOCR:
-    """PaddleOCR 3.5 with transformers backend, Latin-script recognition.
+    global _ocr_instance
+    if _ocr_instance is not None:
+        return _ocr_instance
 
-    `lang=sv` (Swedish) triggers PaddleOCR's `latin_PP-OCRv5_mobile_rec`
-    model, which covers å/ä/ö and the rest of extended Latin. The default
-    (no `lang`) would load the Chinese-trained `PP-OCRv5_*_rec`, which
-    silently emits `□` for any non-Chinese/-English/-Japanese glyph.
-    """
-    global _OCR
-    if _OCR is None:
-        dtype = os.getenv("INFERENCE_DTYPE", "float32")
-        print(
-            f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  lang={OCR_LANG}  dtype={dtype}  "
-            f"orient={USE_DOC_ORIENTATION_CLASSIFY}  unwarp={USE_DOC_UNWARPING}  "
-            f"textline={USE_TEXTLINE_ORIENTATION}"
-        )
-        _OCR = PaddleOCR(
-            device=DEVICE,
-            engine="transformers",
-            lang=OCR_LANG,
-            use_doc_orientation_classify=USE_DOC_ORIENTATION_CLASSIFY,
-            use_doc_unwarping=USE_DOC_UNWARPING,
-            use_textline_orientation=USE_TEXTLINE_ORIENTATION,
-            engine_config={"dtype": dtype},
-        )
-    return _OCR
+    dtype = os.getenv("INFERENCE_DTYPE", "float32")
+    print(
+        f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  lang={OCR_LANG}  dtype={dtype}  "
+        f"orient={USE_DOC_ORIENTATION_CLASSIFY}  unwarp={USE_DOC_UNWARPING}  "
+        f"textline={USE_TEXTLINE_ORIENTATION}"
+    )
+    _ocr_instance = PaddleOCR(
+        device=DEVICE,
+        engine="transformers",
+        lang=OCR_LANG,
+        use_doc_orientation_classify=USE_DOC_ORIENTATION_CLASSIFY,
+        use_doc_unwarping=USE_DOC_UNWARPING,
+        use_textline_orientation=USE_TEXTLINE_ORIENTATION,
+        engine_config={"dtype": dtype},
+    )
+    return _ocr_instance
 
 
 def get_gliner() -> GLiNER2:
-    """GLiNER2-PII; quantize + compile when CUDA is available."""
-    global _GLINER
-    if _GLINER is None:
-        print(f"[pii] loading {GLINER_MODEL}")
-        map_location = "cuda" if HAS_CUDA else "cpu"
-        kwargs: dict[str, Any] = {"map_location": map_location}
-        if HAS_CUDA:
-            kwargs["quantize"] = True
-            kwargs["compile"] = os.getenv("GLINER_COMPILE", "1").lower() not in {"0", "false", "no"}
-        _GLINER = GLiNER2.from_pretrained(GLINER_MODEL, **kwargs)
-        _GLINER.eval()
-    return _GLINER
+    global _gliner_instance
+    if _gliner_instance is not None:
+        return _gliner_instance
+
+    print(f"[pii] loading {GLINER_MODEL}")
+    kwargs: dict[str, Any] = {"map_location": "cuda" if HAS_CUDA else "cpu"}
+    if HAS_CUDA:
+        kwargs["quantize"] = True
+        kwargs["compile"] = _env_bool("GLINER_COMPILE", True)
+
+    _gliner_instance = GLiNER2.from_pretrained(GLINER_MODEL, **kwargs)
+    _gliner_instance.eval()
+    return _gliner_instance
 
 
-# Eager-load so the first request doesn't pay the cold-start tax.
-if os.getenv("LOAD_MODELS_ON_STARTUP", "1").lower() not in {"0", "false", "no"}:
+if _env_bool("LOAD_MODELS_ON_STARTUP", True):
     try:
         get_ocr()
         get_gliner()
@@ -163,95 +132,98 @@ if os.getenv("LOAD_MODELS_ON_STARTUP", "1").lower() not in {"0", "false", "no"}:
         print(f"[warn] eager model load failed: {exc!r}")
 
 
-# ──────────────────────────────────────────────────────────────────────
-# OCR
-# ──────────────────────────────────────────────────────────────────────
-def _to_python(v: Any) -> Any:
-    """Numpy/Tensor scalars/arrays -> plain Python."""
-    if hasattr(v, "tolist"):
-        return v.tolist()
-    if hasattr(v, "item"):
-        return v.item()
-    return v
+def _to_python(value: Any) -> Any:
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if hasattr(value, "item"):
+        return value.item()
+    return value
 
 
-def ocr_image(img: Image.Image) -> dict[str, Any]:
-    """Run PaddleOCR and emit text + per-line boxes with char offsets.
+def _polygon_bounds(poly: Any) -> tuple[int, int, int, int] | None:
+    try:
+        xs = [int(point[0]) for point in poly]
+        ys = [int(point[1]) for point in poly]
+    except (TypeError, IndexError, ValueError):
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
 
-    The frontend's `map_spans_to_boxes` consumer expects a list keyed by "words";
-    we use OCR *lines* here, which is what PaddleOCR returns. The math works the
-    same — each line has a [start, end) char range over the joined text.
 
-    Returns
-    -------
-    {
-      "text":  str,                          # all lines joined with '\\n'
-      "words": [                             # OCR lines, not space-separated words
-        {"text", "start", "end", "x", "y", "w", "h"}, ...
-      ]
-    }
-    """
-    pipeline = get_ocr()
-    arr = np.array(img.convert("RGB"))
-    result = pipeline.predict(arr)
+def _is_non_empty_text(value: Any) -> bool:
+    return bool(str(value or "").strip())
+
+
+def _extract_page_lines(page: Any, char_offset: int) -> tuple[list[dict[str, Any]], int]:
+    """Convert one PaddleOCR page into structured lines. Returns (lines, next_offset)."""
+    page_json = getattr(page, "json", {}) or {}
+    # PaddleOCR 3.5 transformers engine nests results under "res"; older
+    # versions had them at the top level.
+    page_res = page_json.get("res", page_json) or {}
+    rec_texts = page_res.get("rec_texts", []) or []
+    rec_polys = page_res.get("rec_polys", []) or []
 
     lines: list[dict[str, Any]] = []
-    text_parts: list[str] = []
-    offset = 0
-    raw_polys = 0
-    raw_texts = 0
+    offset = char_offset
+    # strict=False — PaddleOCR can drop entries from one array but not the
+    # other when post-processing rejects them.
+    for raw_text, raw_poly in zip(rec_texts, rec_polys, strict=False):
+        text = str(raw_text) if raw_text is not None else ""
+        if not text.strip():
+            continue
+
+        bounds = _polygon_bounds(_to_python(raw_poly))
+        if bounds is None:
+            continue
+        x0, y0, x1, y1 = bounds
+
+        end = offset + len(text)
+        lines.append(
+            {
+                "text": text,
+                "start": offset,
+                "end": end,
+                "x": x0,
+                "y": y0,
+                "w": x1 - x0,
+                "h": y1 - y0,
+            }
+        )
+        offset = end + 1  # +1 for the '\n' separator
+
+    return lines, offset
+
+
+def ocr_image(image: Image.Image) -> dict[str, Any]:
+    """Run PaddleOCR. Returns {"text": joined, "words": [line_dict, ...]}."""
+    pipeline = get_ocr()
+    array = np.array(image.convert("RGB"))
+    result = pipeline.predict(array)
+
+    all_lines: list[dict[str, Any]] = []
+    char_offset = 0
+    detected_polys = 0
+    recognised_texts = 0
 
     for page in result:
         page_json = getattr(page, "json", {}) or {}
-        # PaddleOCR 3.5 transformers engine nests fields under "res".
-        # Fall back to the top level for forward/backward compatibility.
         page_res = page_json.get("res", page_json) or {}
-        rec_texts = page_res.get("rec_texts", []) or []
-        rec_polys = page_res.get("rec_polys", []) or []
-        raw_polys += len(rec_polys)
-        raw_texts += sum(1 for t in rec_texts if str(t or "").strip())
+        detected_polys += len(page_res.get("rec_polys", []) or [])
+        recognised_texts += sum(
+            1 for t in (page_res.get("rec_texts") or []) if _is_non_empty_text(t)
+        )
 
-        # strict=False: PaddleOCR can occasionally return mismatched arrays
-        # (rec_texts vs rec_polys) when post-processing drops entries.
-        for txt, poly in zip(rec_texts, rec_polys, strict=False):
-            txt = str(txt) if txt is not None else ""
-            if not txt.strip():
-                continue
-            poly = _to_python(poly)
-            try:
-                xs = [int(p[0]) for p in poly]
-                ys = [int(p[1]) for p in poly]
-            except (TypeError, IndexError, ValueError):
-                continue
-            x0, y0 = min(xs), min(ys)
-            x1, y1 = max(xs), max(ys)
-            start = offset
-            end = offset + len(txt)
-            lines.append(
-                {
-                    "text": txt,
-                    "start": start,
-                    "end": end,
-                    "x": x0,
-                    "y": y0,
-                    "w": x1 - x0,
-                    "h": y1 - y0,
-                }
-            )
-            text_parts.append(txt)
-            offset = end + 1  # account for the '\n' separator
+        page_lines, char_offset = _extract_page_lines(page, char_offset)
+        all_lines.extend(page_lines)
 
     print(
-        f"[ocr] image={img.width}x{img.height}  "
-        f"detected_polys={raw_polys}  recognised_texts={raw_texts}  "
-        f"kept_lines={len(lines)}"
+        f"[ocr] image={image.width}x{image.height}  "
+        f"detected_polys={detected_polys}  recognised_texts={recognised_texts}  "
+        f"kept_lines={len(all_lines)}"
     )
-    return {"text": "\n".join(text_parts), "words": lines}
+    joined = "\n".join(line["text"] for line in all_lines)
+    return {"text": joined, "words": all_lines}
 
 
-# ──────────────────────────────────────────────────────────────────────
-# PII via GLiNER2
-# ──────────────────────────────────────────────────────────────────────
 def _gpu(fn):
     """ZeroGPU decorator; no-op when running locally."""
     if spaces is None:
@@ -259,12 +231,28 @@ def _gpu(fn):
     return spaces.GPU(duration=60)(fn)
 
 
+def _entity_to_span(label: str, entity: Any) -> dict[str, Any] | None:
+    if not isinstance(entity, dict):
+        return None
+    try:
+        start = int(entity["start"])
+        end = int(entity["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {
+        "label": label,
+        "text": entity.get("text", ""),
+        "start": start,
+        "end": end,
+        "confidence": float(entity.get("confidence", 1.0)),
+    }
+
+
 @_gpu
 def run_pii_analysis(
     text: str,
     threshold: float = 0.5,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Extract PII spans from *text*. Returns (source_text, spans)."""
     if not text or not text.strip():
         return text, []
 
@@ -282,78 +270,69 @@ def run_pii_analysis(
     for label, entities in (result.get("entities") or {}).items():
         if label not in CATEGORIES_META:
             continue
-        for ent in entities or []:
-            if not isinstance(ent, dict):
-                continue
-            spans.append(
-                {
-                    "label": label,
-                    "text": ent.get("text", ""),
-                    "start": int(ent["start"]),
-                    "end": int(ent["end"]),
-                    "confidence": float(ent.get("confidence", 1.0)),
-                }
-            )
+        for entity in entities or []:
+            span = _entity_to_span(label, entity)
+            if span is not None:
+                spans.append(span)
 
     spans.sort(key=lambda s: (s["start"], s["end"]))
     return text, spans
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Char spans  →  pixel boxes
-# ──────────────────────────────────────────────────────────────────────
+BOX_PADDING_PX = 2
+
+
+def _line_overlaps_span(line: dict[str, Any], span_start: int, span_end: int) -> bool:
+    return not (line["end"] <= span_start or line["start"] >= span_end)
+
+
+def _single_line_box(span: dict[str, Any], line: dict[str, Any]) -> dict[str, Any]:
+    """Narrow a span to its proportional x-range within one OCR line.
+
+    Assumes roughly uniform per-character width — approximate, but works
+    well for screen-rendered text and is tighter than line-level masking.
+    """
+    line_length = max(1, line["end"] - line["start"])
+    local_start = max(0, span["start"] - line["start"])
+    local_end = min(line_length, span["end"] - line["start"])
+    x_start = line["x"] + int(line["w"] * local_start / line_length)
+    x_end = line["x"] + int(line["w"] * local_end / line_length)
+    return {
+        "label": span["label"],
+        "text": span.get("text", ""),
+        "x": max(0, x_start - BOX_PADDING_PX),
+        "y": line["y"],
+        "w": max(1, (x_end - x_start) + 2 * BOX_PADDING_PX),
+        "h": line["h"],
+    }
+
+
+def _union_box(span: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    x0 = min(line["x"] for line in lines)
+    y0 = min(line["y"] for line in lines)
+    x1 = max(line["x"] + line["w"] for line in lines)
+    y1 = max(line["y"] + line["h"] for line in lines)
+    return {
+        "label": span["label"],
+        "text": span.get("text", ""),
+        "x": x0,
+        "y": y0,
+        "w": x1 - x0,
+        "h": y1 - y0,
+    }
+
+
 def map_spans_to_boxes(
     lines: list[dict[str, Any]],
     spans: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project each PII span onto the OCR line(s) it overlaps.
-
-    Single-line spans are narrowed within the line by character proportion;
-    multi-line spans return the union bounding box. Proportional narrowing
-    is approximate (assumes roughly uniform per-character width) but works
-    well for screen-rendered Swedish PDF text and gives a tighter redaction
-    than line-level masking.
-    """
     boxes: list[dict[str, Any]] = []
-    PAD = 2
-
-    for sp in spans:
-        s, e = sp["start"], sp["end"]
-        overlap = [ln for ln in lines if not (ln["end"] <= s or ln["start"] >= e)]
-        if not overlap:
+    for span in spans:
+        overlapping = [ln for ln in lines if _line_overlaps_span(ln, span["start"], span["end"])]
+        if not overlapping:
             continue
-
-        if len(overlap) == 1:
-            ln = overlap[0]
-            line_len = max(1, ln["end"] - ln["start"])
-            local_s = max(0, s - ln["start"])
-            local_e = min(line_len, e - ln["start"])
-            x0 = ln["x"] + int(ln["w"] * local_s / line_len)
-            x1 = ln["x"] + int(ln["w"] * local_e / line_len)
-            boxes.append(
-                {
-                    "label": sp["label"],
-                    "text": sp.get("text", ""),
-                    "x": max(0, x0 - PAD),
-                    "y": ln["y"],
-                    "w": max(1, (x1 - x0) + 2 * PAD),
-                    "h": ln["h"],
-                }
-            )
+        if len(overlapping) == 1:
+            boxes.append(_single_line_box(span, overlapping[0]))
         else:
-            x0 = min(ln["x"] for ln in overlap)
-            y0 = min(ln["y"] for ln in overlap)
-            x1 = max(ln["x"] + ln["w"] for ln in overlap)
-            y1 = max(ln["y"] + ln["h"] for ln in overlap)
-            boxes.append(
-                {
-                    "label": sp["label"],
-                    "text": sp.get("text", ""),
-                    "x": x0,
-                    "y": y0,
-                    "w": x1 - x0,
-                    "h": y1 - y0,
-                }
-            )
-
+            boxes.append(_union_box(span, overlapping))
     return boxes
