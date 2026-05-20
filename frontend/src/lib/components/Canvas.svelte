@@ -1,5 +1,6 @@
 <script lang="ts">
-import { Loader2, Maximize2, Upload, ZoomIn, ZoomOut } from 'lucide-svelte';
+import { Maximize2, Upload, ZoomIn, ZoomOut } from 'lucide-svelte';
+import { Progress } from '$lib/components/ui/progress';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { Separator } from '$lib/components/ui/separator';
@@ -81,7 +82,7 @@ function paint(node: Element) {
       ctx.restore();
     }
 
-    if (editor.showCategoryColors) {
+    if (editor.showCategoryColors && editor.colorMaskMode !== 'hide') {
       // Preview — translucent fill so the underlying image stays partly
       // visible. Either per-category colour or a unified swatch colour.
       ctx.save();
@@ -97,6 +98,9 @@ function paint(node: Element) {
         ctx.fillRect(b.x, b.y, b.w, b.h);
       }
       ctx.restore();
+    } else if (editor.showCategoryColors && editor.colorMaskMode === 'hide') {
+      // Preview only: no masks painted at all (so the user can see the
+      // raw document under the redactions before exporting).
     } else {
       ctx.fillStyle = editor.maskColor;
       for (const b of editor.boxes) {
@@ -351,16 +355,26 @@ const cursorClass = $derived.by(() => {
 
 <div class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
   {#if editor.loading && editor.hasImage}
-    <!-- Canvas-scoped loading overlay so the sidebars + navbar stay
-         interactive. The initial-load uses the full-screen Loading
-         component instead. -->
+    <!-- Canvas-scoped progress overlay. No spinner here — the Run
+         button already shows one for the transient feedback; this
+         space is dedicated to the determinate progress bar. -->
     <div
-      class="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/55 backdrop-blur-[2px]"
+      class="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/55 backdrop-blur-[2px]"
     >
-      <Loader2 class="h-5 w-5 animate-spin text-primary" />
       <span class="font-mono text-[11px] tracking-wide text-muted-foreground">
         {editor.loadingMessage || 'running pipeline…'}
       </span>
+      <div class="w-56">
+        <Progress
+          value={editor.loadingProgress?.done ?? 0}
+          max={Math.max(1, editor.loadingProgress?.total ?? 1)}
+        />
+        {#if editor.loadingProgress && editor.loadingProgress.total > 1}
+          <div class="mt-1.5 text-center font-mono text-[10.5px] tabular-nums text-text3">
+            {editor.loadingProgress.done} / {editor.loadingProgress.total}
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 

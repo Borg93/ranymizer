@@ -15,6 +15,7 @@ import { zipSync } from 'fflate';
 import { toast } from 'svelte-sonner';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
+import { Spinner } from '$lib/components/ui/spinner';
 import Canvas from './Canvas.svelte';
 import Sidebar from './Sidebar.svelte';
 import SettingsDrawer from './SettingsDrawer.svelte';
@@ -357,8 +358,13 @@ function onKeyDown(e: KeyboardEvent) {
         onclick={() => editor.run()}
         title="Run the pipeline on all pages with the current settings"
       >
-        <Play class="h-3.5 w-3.5" />
-        <span class="text-[12px] font-medium tracking-tight">Run</span>
+        {#if editor.loading}
+          <Spinner class="h-3.5 w-3.5" />
+          <span class="text-[12px] font-medium tracking-tight">Running…</span>
+        {:else}
+          <Play class="h-3.5 w-3.5" />
+          <span class="text-[12px] font-medium tracking-tight">Run</span>
+        {/if}
       </Button>
 
       <Button

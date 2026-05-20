@@ -84,7 +84,13 @@ export class EditorState {
   //   colorMaskMode = 'unified'      → all boxes in maskColor
   //   colorMaskMode = 'per-category' → each box in its category colour
   showCategoryColors = $state(false);
-  colorMaskMode = $state<'unified' | 'per-category'>('unified');
+  /**
+   * 'unified'      → all visible boxes painted in maskColor at maskAlpha
+   * 'per-category' → each box in its category colour at maskAlpha
+   * 'hide'         → don't paint any masks (preview only — export PNG is
+   *                  unaffected and still uses maskColor)
+   */
+  colorMaskMode = $state<'unified' | 'per-category' | 'hide'>('unified');
   maskAlpha = $state(0.6);
   // Solid mask color used in the unified preview and always for the export PNG.
   maskColor = $state('#000000');

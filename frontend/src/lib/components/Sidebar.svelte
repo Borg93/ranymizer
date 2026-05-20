@@ -221,8 +221,8 @@ const categoryRows = $derived(
     </button>
 
     {#if editor.showCategoryColors}
-      <!-- Unified | Per-category -->
-      <div class="mt-2 grid grid-cols-2 gap-1 rounded-md border border-border bg-background p-0.5">
+      <!-- Unified | Per-category | Hide (preview-only; export PNG is unaffected) -->
+      <div class="mt-2 grid grid-cols-3 gap-1 rounded-md border border-border bg-background p-0.5">
         <button
           type="button"
           class="rounded-sm py-1 text-[11px] tracking-tight transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
@@ -237,24 +237,39 @@ const categoryRows = $derived(
           data-active={editor.colorMaskMode === 'per-category'}
           onclick={() => (editor.colorMaskMode = 'per-category')}
         >
-          Per category
+          By category
+        </button>
+        <button
+          type="button"
+          class="rounded-sm py-1 text-[11px] tracking-tight transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+          data-active={editor.colorMaskMode === 'hide'}
+          onclick={() => (editor.colorMaskMode = 'hide')}
+          title="Hide masks so you can see the raw image. Export PNG still applies the solid mask."
+        >
+          Hide
         </button>
       </div>
 
-      <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
-        <span class="w-12 shrink-0">Opacity</span>
-        <input
-          type="range"
-          min="0.1"
-          max="1"
-          step="0.05"
-          bind:value={editor.maskAlpha}
-          class="flex-1 accent-primary"
-        />
-        <span class="w-8 text-right font-mono tabular-nums text-foreground">
-          {Math.round(editor.maskAlpha * 100)}%
-        </span>
-      </label>
+      {#if editor.colorMaskMode !== 'hide'}
+        <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+          <span class="w-12 shrink-0">Opacity</span>
+          <input
+            type="range"
+            min="0.1"
+            max="1"
+            step="0.05"
+            bind:value={editor.maskAlpha}
+            class="flex-1 accent-primary"
+          />
+          <span class="w-8 text-right font-mono tabular-nums text-foreground">
+            {Math.round(editor.maskAlpha * 100)}%
+          </span>
+        </label>
+      {:else}
+        <p class="mt-2 px-1 font-mono text-[10.5px] text-text3">
+          Preview only. Exported PNG / ZIP still uses the solid mask color.
+        </p>
+      {/if}
 
       {#if editor.colorMaskMode === 'unified'}
         <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
