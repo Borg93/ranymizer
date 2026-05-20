@@ -119,23 +119,25 @@ function paint(node: Element) {
       ctx.restore();
     }
 
-    const sel = editor.selectedBox;
-    if (sel) {
+    if (editor.selectedIds.size > 0) {
       ctx.save();
       const primary = cssVar('--primary') || '#818cf8';
-      // Glow halo so the selection pops against both colored masks and the
-      // solid mask color (even if the user picks a similar hue).
       ctx.shadowColor = primary;
       ctx.shadowBlur = 12 / editor.scale;
       ctx.strokeStyle = primary;
       ctx.lineWidth = Math.max(2, 2.5 / editor.scale);
-      ctx.strokeRect(sel.x - 1, sel.y - 1, sel.w + 2, sel.h + 2);
-      // A faint inner dashed line for extra contrast on light masks.
+      for (const b of editor.boxes) {
+        if (!editor.selectedIds.has(b.id)) continue;
+        ctx.strokeRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+      }
       ctx.shadowBlur = 0;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = Math.max(1, 1 / editor.scale);
       ctx.setLineDash([4 / editor.scale, 3 / editor.scale]);
-      ctx.strokeRect(sel.x, sel.y, sel.w, sel.h);
+      for (const b of editor.boxes) {
+        if (!editor.selectedIds.has(b.id)) continue;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+      }
       ctx.restore();
     }
 
@@ -206,7 +208,7 @@ function onMouseDown(ev: MouseEvent) {
   const hit = hitTest(x, y);
 
   if (editor.mode === 'draw' && !hit) {
-    editor.selected = null;
+    editor.clearSelection();
     editor.drag = {
       type: 'draw',
       startX: x,
@@ -214,7 +216,7 @@ function onMouseDown(ev: MouseEvent) {
       newBox: { x, y, w: 0, h: 0, label: 'custom', text: '' },
     };
   } else if (hit) {
-    editor.selected = hit.id;
+    editor.selectOnly(hit.id);
     editor.beginMove();
     editor.drag = {
       type: 'move',
@@ -224,7 +226,7 @@ function onMouseDown(ev: MouseEvent) {
       boxId: hit.id,
     };
   } else {
-    editor.selected = null;
+    editor.clearSelection();
     editor.drag = null;
   }
 }

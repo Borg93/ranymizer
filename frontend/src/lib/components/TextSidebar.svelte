@@ -1,11 +1,32 @@
 <script lang="ts">
-import { AlertTriangle, Check, Copy, Pencil, Search, Trash2, X } from 'lucide-svelte';
+import {
+  AlertTriangle,
+  Check,
+  CheckSquare,
+  Copy,
+  Pencil,
+  Search,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { editor } from '$lib/state.svelte';
 
 let query = $state('');
 let editingId = $state<number | null>(null);
 const activeLabelFilter = new SvelteSet<string>();
+
+// Element ref for the scrollable rows container — used to scroll the
+// canvas-selected row back into view when the user clicks a box on the
+// canvas that's outside the sidebar viewport.
+let listEl = $state<HTMLDivElement>();
+
+$effect(() => {
+  if (editor.selected === null || !listEl) return;
+  const el = listEl.querySelector<HTMLElement>(`[data-row-id="${editor.selected}"]`);
+  el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
 
 // Resizable width — drag the right edge to adjust.
 const MIN_WIDTH = 220;
@@ -126,6 +147,49 @@ function colorFor(label: string): string {
 function displayLabelFor(label: string): string {
   return editor.catMeta[label]?.label ?? label;
 }
+
+const filteredIds = $derived(filteredRows.map((r) => r.id));
+
+const selectedVisibleCount = $derived.by(() => {
+  let n = 0;
+  for (const id of filteredIds) if (editor.selectedIds.has(id)) n++;
+  return n;
+});
+
+const allVisibleSelected = $derived(
+  filteredIds.length > 0 && selectedVisibleCount === filteredIds.length,
+);
+
+function onRowClick(event: MouseEvent, id: number): void {
+  if (event.shiftKey) {
+    editor.selectRange(id, filteredIds);
+    return;
+  }
+  if (event.metaKey || event.ctrlKey) {
+    editor.selectToggle(id);
+    return;
+  }
+  editor.selectOnly(id);
+}
+
+function toggleAllVisible(): void {
+  if (allVisibleSelected) {
+    for (const id of filteredIds) editor.selectedIds.delete(id);
+    if (editor.selected !== null && !editor.selectedIds.has(editor.selected)) {
+      editor.selected = null;
+    }
+  } else {
+    editor.selectAll(filteredIds);
+  }
+}
+
+function bulkSetLabel(label: string): void {
+  editor.setBoxLabelMany(label);
+}
+
+function bulkDelete(): void {
+  editor.removeSelectedMany();
+}
 </script>
 
 <svelte:window onmousemove={onResizeMove} onmouseup={onResizeEnd} />
@@ -206,6 +270,71 @@ function displayLabelFor(label: string): string {
     {/if}
   </header>
 
+  <!-- Bulk actions: only visible when something is selected. -->
+  <div
+    class="sticky top-[calc(2.5rem+1.75rem)] z-10 flex items-center gap-1.5 border-b border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
+  >
+    <button
+      type="button"
+      class="flex items-center gap-1 rounded p-1 text-muted-foreground transition-colors hover:bg-surface2 hover:text-foreground"
+      onclick={toggleAllVisible}
+      title={allVisibleSelected ? 'Deselect all visible' : 'Select all visible'}
+      aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
+      disabled={filteredRows.length === 0}
+    >
+      {#if allVisibleSelected}
+        <CheckSquare class="h-3.5 w-3.5" />
+      {:else}
+        <Square class="h-3.5 w-3.5" />
+      {/if}
+    </button>
+
+    {#if editor.selectedIds.size > 0}
+      <span class="font-mono tabular-nums text-foreground">
+        {editor.selectedIds.size}
+      </span>
+      <span>selected</span>
+
+      <select
+        class="ml-auto rounded-sm border border-border bg-background px-1 py-0.5 text-[10.5px] text-foreground"
+        title="Set category for selected boxes"
+        value=""
+        onchange={(e) => {
+          const t = e.currentTarget as HTMLSelectElement;
+          if (t.value) bulkSetLabel(t.value);
+          t.value = '';
+        }}
+      >
+        <option value="" disabled>Set category…</option>
+        {#each categoryKeys as cat (cat)}
+          <option value={cat}>{displayLabelFor(cat)}</option>
+        {/each}
+      </select>
+
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        onclick={bulkDelete}
+        title="Delete selected (Del)"
+        aria-label="Delete selected"
+      >
+        <Trash2 class="h-3.5 w-3.5" />
+      </button>
+
+      <button
+        type="button"
+        class="rounded p-1 text-muted-foreground transition-colors hover:bg-surface2 hover:text-foreground"
+        onclick={() => editor.clearSelection()}
+        title="Clear selection (Esc)"
+        aria-label="Clear selection"
+      >
+        <X class="h-3.5 w-3.5" />
+      </button>
+    {:else}
+      <span class="ml-1">no selection</span>
+    {/if}
+  </div>
+
   {#if filteredRows.length === 0}
     <div class="px-4 py-6 text-center text-xs italic text-text3">
       {rows.length === 0
@@ -213,21 +342,24 @@ function displayLabelFor(label: string): string {
         : 'No matches.'}
     </div>
   {:else}
-    <div class="flex flex-col">
+    <div bind:this={listEl} class="flex flex-col">
       {#each filteredRows as r (r.id)}
         {@const isEditing = editingId === r.id}
-        {@const isSelected = editor.selected === r.id}
+        {@const isSelected = editor.selectedIds.has(r.id)}
+        {@const isPrimary = editor.selected === r.id}
         {@const isOverlap = editor.overlappingIds.has(r.id)}
         {@const isDuplicate = editor.duplicateIds.has(r.id)}
         <div
-          class="group flex items-start gap-2 border-b border-border px-3 py-2 text-[12px] transition-colors hover:bg-surface2 data-[selected=true]:bg-surface2"
+          data-row-id={r.id}
+          class="group flex items-start gap-2 border-b border-border px-3 py-2 text-[12px] transition-colors hover:bg-surface2 data-[selected=true]:bg-surface2 data-[primary=true]:border-l-2 data-[primary=true]:border-l-primary"
           data-selected={isSelected}
+          data-primary={isPrimary}
         >
           <button
             type="button"
             class="mt-0.5 h-3.5 w-[3px] shrink-0 rounded-[1.5px]"
             style:background={colorFor(r.label)}
-            onclick={() => (editor.selected = r.id)}
+            onclick={(e) => onRowClick(e, r.id)}
             aria-label="Select box"
             title={displayLabelFor(r.label)}
           ></button>
@@ -242,7 +374,7 @@ function displayLabelFor(label: string): string {
                   node.focus();
                   node.select();
                 }}
-                onfocus={() => (editor.selected = r.id)}
+                onfocus={() => editor.selectOnly(r.id)}
                 onkeydown={(e) => {
                   if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
                   if (e.key === 'Escape') stopEditing();
@@ -263,7 +395,7 @@ function displayLabelFor(label: string): string {
               <button
                 type="button"
                 class="min-w-0 truncate text-left text-foreground hover:text-primary"
-                onclick={() => (editor.selected = r.id)}
+                onclick={(e) => onRowClick(e, r.id)}
                 ondblclick={() => startEditing(r.id)}
                 title={r.text || '(no text)'}
               >

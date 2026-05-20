@@ -158,12 +158,15 @@ function onKeyDown(e: KeyboardEvent) {
   }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (editor.selected !== null) {
+    if (editor.selectedIds.size > 1) {
+      editor.removeSelectedMany();
+      e.preventDefault();
+    } else if (editor.selected !== null) {
       editor.removeSelected();
       e.preventDefault();
     }
   } else if (e.key === 'Escape') {
-    editor.selected = null;
+    editor.clearSelection();
     editor.drag = null;
   } else if (e.key === 'v' || e.key === 'V') editor.setMode('select');
   else if (e.key === 'b' || e.key === 'B') editor.setMode('draw');

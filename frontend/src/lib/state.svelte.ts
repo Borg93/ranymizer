@@ -84,7 +84,7 @@ export class EditorState {
   //   colorMaskMode = 'unified'      → all boxes in maskColor
   //   colorMaskMode = 'per-category' → each box in its category colour
   showCategoryColors = $state(false);
-  colorMaskMode = $state<'unified' | 'per-category'>('per-category');
+  colorMaskMode = $state<'unified' | 'per-category'>('unified');
   maskAlpha = $state(0.6);
   // Solid mask color used in the unified preview and always for the export PNG.
   maskColor = $state('#000000');
@@ -98,7 +98,12 @@ export class EditorState {
   // ── editor tool state ─────────────────────────────────────────────
   mode = $state<Mode>('select');
   scale = $state(1);
+  /** Primary selection — used by the canvas drag/move target and as the
+   *  anchor for shift-range selection in the sidebar. */
   selected = $state<number | null>(null);
+  /** Set of all selected box ids. When size > 1 the sidebar enters bulk
+   *  mode. `selected` is always either null or a member of this set. */
+  selectedIds = new SvelteSet<number>();
   drag = $state<DragState | null>(null);
   cursor = $state<{ x: number; y: number } | null>(null);
 
@@ -475,6 +480,7 @@ export class EditorState {
     this.spans = p.spans;
     this.boxes = p.boxes;
     this.ocrLines = p.ocrLines;
+    this.selectedIds.clear();
     this.selected = null;
     this.drag = null;
   }
@@ -533,7 +539,87 @@ export class EditorState {
     if (this.selected === null) return;
     this.#snapshotForUndo();
     this.boxes = this.boxes.filter((b) => b.id !== this.selected);
+    this.selectedIds.delete(this.selected);
     this.selected = null;
+  }
+
+  // ── multi-selection ───────────────────────────────────────────────
+  /** Replace the selection set with just `id` and set it as the anchor. */
+  selectOnly(id: number): void {
+    this.selectedIds.clear();
+    this.selectedIds.add(id);
+    this.selected = id;
+  }
+
+  /** Cmd/Ctrl-click — toggle membership without clearing the rest. */
+  selectToggle(id: number): void {
+    if (this.selectedIds.has(id)) {
+      this.selectedIds.delete(id);
+      if (this.selected === id) {
+        const first = this.selectedIds.values().next().value;
+        this.selected = first ?? null;
+      }
+    } else {
+      this.selectedIds.add(id);
+      this.selected = id;
+    }
+  }
+
+  /**
+   * Shift-click — select every id between the current anchor (`selected`)
+   * and `id` in `idsInOrder` (the visible order in the sidebar). If there
+   * is no anchor, behaves like `selectOnly`.
+   */
+  selectRange(id: number, idsInOrder: number[]): void {
+    if (this.selected === null) {
+      this.selectOnly(id);
+      return;
+    }
+    const anchor = idsInOrder.indexOf(this.selected);
+    const target = idsInOrder.indexOf(id);
+    if (anchor < 0 || target < 0) {
+      this.selectOnly(id);
+      return;
+    }
+    const [lo, hi] = anchor <= target ? [anchor, target] : [target, anchor];
+    this.selectedIds.clear();
+    for (let i = lo; i <= hi; i++) this.selectedIds.add(idsInOrder[i]);
+    this.selected = id;
+  }
+
+  selectAll(ids: number[]): void {
+    this.selectedIds.clear();
+    for (const id of ids) this.selectedIds.add(id);
+    this.selected = ids.length > 0 ? ids[ids.length - 1] : null;
+  }
+
+  clearSelection(): void {
+    this.selectedIds.clear();
+    this.selected = null;
+  }
+
+  /** Delete every box in `selectedIds` in one undo step. */
+  removeSelectedMany(): void {
+    if (this.selectedIds.size === 0) return;
+    this.#snapshotForUndo();
+    const ids = this.selectedIds;
+    this.boxes = this.boxes.filter((b) => !ids.has(b.id));
+    this.selectedIds.clear();
+    this.selected = null;
+  }
+
+  /** Set the same label on every box in `selectedIds` in one undo step. */
+  setBoxLabelMany(label: string): void {
+    if (this.selectedIds.size === 0) return;
+    const ids = this.selectedIds;
+    const changedAny = this.boxes.some((b) => ids.has(b.id) && b.label !== label);
+    if (!changedAny) return;
+    this.#snapshotForUndo();
+    for (const b of this.boxes) {
+      if (!ids.has(b.id)) continue;
+      b.label = label;
+    }
+    if (label !== 'custom') this.activeCats.add(label);
   }
 
   /** Collect text from every OCR line that overlaps the given rectangle.
