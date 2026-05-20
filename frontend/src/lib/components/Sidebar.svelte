@@ -1,21 +1,15 @@
 <script lang="ts">
-import { MousePointer2, Square, Download, Copy, ScanText, FilePlus2, Palette } from 'lucide-svelte';
+import { MousePointer2, Square, Download, Copy, ScanText, Palette } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '$lib/components/ui/toggle-group';
 import { Badge } from '$lib/components/ui/badge';
+import CollapsibleSection from './CollapsibleSection.svelte';
 
 // All known category keys, sorted so the picker order is stable.
 const categoryKeys = $derived(['custom', ...Object.keys(editor.catMeta).sort()]);
 
-// Hidden file input for the "Add image" action at the bottom of the sidebar.
-let addFileInput = $state<HTMLInputElement>();
-function onAddFiles(e: Event) {
-  const t = e.currentTarget as HTMLInputElement;
-  const list = t.files ? Array.from(t.files) : [];
-  if (list.length > 0) editor.uploadFiles(list, { append: true });
-  t.value = ''; // allow re-selecting the same file later
-}
+let categoriesExpanded = $state(true);
 
 type Props = {
   onDownload: () => void;
@@ -249,7 +243,7 @@ const categoryRows = $derived(
             editor.selected !== null &&
             editor.setBoxLabel(editor.selected, (e.currentTarget as HTMLSelectElement).value)}
         >
-          {#each categoryKeys as cat}
+          {#each categoryKeys as cat (cat)}
             <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
           {/each}
         </select>
@@ -258,7 +252,7 @@ const categoryRows = $derived(
           class="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[12.5px] text-foreground"
           bind:value={editor.drawLabel}
         >
-          {#each categoryKeys as cat}
+          {#each categoryKeys as cat (cat)}
             <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
           {/each}
         </select>
@@ -266,11 +260,7 @@ const categoryRows = $derived(
     </section>
   {/if}
 
-  <!-- Categories -->
-  <section class="border-b border-border px-4 py-3.5">
-    <div class="mb-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
-      Categories
-    </div>
+  <CollapsibleSection title="Categories" count={categoryRows.length} bind:expanded={categoriesExpanded}>
     <div class="flex flex-col gap-0.5">
       {#if categoryRows.length === 0}
         <div class="py-1 text-xs italic text-text3">no pii detected</div>
@@ -292,7 +282,7 @@ const categoryRows = $derived(
         {/each}
       {/if}
     </div>
-  </section>
+  </CollapsibleSection>
 
   <!-- Export -->
   <section class="px-4 py-3.5">
@@ -324,26 +314,6 @@ const categoryRows = $derived(
     </div>
   </section>
 
-  <!-- Add another image / PDF — appends to the current set so pagination
-       keeps the old uploads alongside the new one. -->
-  <section class="border-t border-border px-4 py-3.5">
-    <input
-      bind:this={addFileInput}
-      type="file"
-      class="hidden"
-      accept="image/*,application/pdf"
-      multiple
-      onchange={onAddFiles}
-    />
-    <Button
-      variant="default"
-      class="w-full justify-center"
-      onclick={() => addFileInput?.click()}
-    >
-      <FilePlus2 class="mr-2 h-3.5 w-3.5" />
-      Add image
-    </Button>
-  </section>
 </aside>
 
 <style>

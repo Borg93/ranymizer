@@ -1,5 +1,5 @@
 <script lang="ts">
-import { ChevronLeft, ChevronRight, Sun, Moon, Rows3 } from 'lucide-svelte';
+import { ChevronLeft, ChevronRight, Sun, Moon, Rows3, FilePlus2 } from 'lucide-svelte';
 import { toast } from 'svelte-sonner';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -84,6 +84,16 @@ function exportText() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   toast.success(`saved ${a.download}`);
+}
+
+// Hidden file input behind the navbar "Add" button. Appends so existing
+// pages stay alongside the newly-uploaded ones.
+let addFileInput = $state<HTMLInputElement>();
+function onAddFiles(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  const files = input.files ? Array.from(input.files) : [];
+  if (files.length > 0) editor.uploadFiles(files, { append: true });
+  input.value = '';
 }
 
 function onKeyDown(e: KeyboardEvent) {
@@ -222,7 +232,25 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
     </div>
 
     <!-- Right: actions -->
-    <div class="flex items-center justify-end">
+    <div class="flex items-center justify-end gap-1.5">
+      <input
+        bind:this={addFileInput}
+        type="file"
+        class="hidden"
+        accept="image/*,application/pdf"
+        multiple
+        onchange={onAddFiles}
+      />
+      <Button
+        variant="secondary"
+        size="sm"
+        class="h-7 gap-1.5 border border-border px-2 text-foreground"
+        onclick={() => addFileInput?.click()}
+        title="Upload another image or PDF (appends to current set)"
+      >
+        <FilePlus2 class="h-3.5 w-3.5" />
+        <span class="text-[12px] font-medium tracking-tight">Add</span>
+      </Button>
       <Button
         variant="secondary"
         size="sm"
