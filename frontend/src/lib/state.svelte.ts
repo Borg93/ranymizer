@@ -52,7 +52,16 @@ function loadPipelineConfig(): PipelineConfig {
     return {
       paddleocr: { ...DEFAULT_PIPELINE_CONFIG.paddleocr, ...(parsed.paddleocr ?? {}) },
       vlm: { ...DEFAULT_PIPELINE_CONFIG.vlm, ...(parsed.vlm ?? {}) },
-      gliner: { ...DEFAULT_PIPELINE_CONFIG.gliner, ...(parsed.gliner ?? {}) },
+      gliner: {
+        ...DEFAULT_PIPELINE_CONFIG.gliner,
+        ...(parsed.gliner ?? {}),
+        // Per-label descriptions can grow over time; always start from the
+        // default map so new labels show up even if the saved blob is older.
+        descriptions: {
+          ...DEFAULT_PIPELINE_CONFIG.gliner.descriptions,
+          ...(parsed.gliner?.descriptions ?? {}),
+        },
+      },
     };
   } catch {
     return structuredClone(DEFAULT_PIPELINE_CONFIG);

@@ -1,9 +1,10 @@
 <script lang="ts">
-import { Play, RotateCcw, X } from 'lucide-svelte';
+import { Play, RotateCcw, RotateCw, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
-import { DEFAULT_PII_LABELS } from '$lib/types';
+import { DEFAULT_LABEL_DESCRIPTIONS, DEFAULT_PII_LABELS } from '$lib/types';
 import { Button } from '$lib/components/ui/button';
 import CollapsibleSection from './CollapsibleSection.svelte';
+import PipelineSketch from './PipelineSketch.svelte';
 
 function close(): void {
   editor.settingsOpen = false;
@@ -19,6 +20,26 @@ function toggleLabel(label: string): void {
   else enabled.add(label);
   editor.pipelineConfig.gliner.enabledLabels = [...enabled];
   persist();
+}
+
+function descriptionFor(label: string): string {
+  return (
+    editor.pipelineConfig.gliner.descriptions[label] ??
+    DEFAULT_LABEL_DESCRIPTIONS[label] ??
+    ''
+  );
+}
+
+function setDescription(label: string, value: string): void {
+  editor.pipelineConfig.gliner.descriptions = {
+    ...editor.pipelineConfig.gliner.descriptions,
+    [label]: value,
+  };
+  persist();
+}
+
+function resetDescription(label: string): void {
+  setDescription(label, DEFAULT_LABEL_DESCRIPTIONS[label] ?? '');
 }
 
 function applyAndRun(): Promise<void> {
@@ -59,7 +80,7 @@ const rowToggleCls =
   ></div>
 
   <div
-    class="fixed right-0 top-0 z-50 flex h-screen w-[400px] max-w-[92vw] flex-col border-l border-border bg-card shadow-xl"
+    class="fixed right-0 top-0 z-50 flex h-screen w-[480px] max-w-[94vw] flex-col border-l border-border bg-card shadow-xl"
     role="dialog"
     aria-modal="true"
     aria-label="Pipeline settings"
@@ -72,6 +93,11 @@ const rowToggleCls =
     </header>
 
     <div class="flex-1 overflow-y-auto">
+      <!-- ─── How the pipeline works ─────────────────────────────────── -->
+      <CollapsibleSection title="How the pipeline works">
+        <PipelineSketch />
+      </CollapsibleSection>
+
       <!-- ─── GLiNER2 (PII) ──────────────────────────────────────────── -->
       <CollapsibleSection title="GLiNER2 — PII detection">
         <div class="flex flex-col gap-3">
@@ -136,6 +162,47 @@ const rowToggleCls =
                 {editor.catMeta[label]?.label ?? label}
               </span>
             </button>
+          {/each}
+        </div>
+      </CollapsibleSection>
+
+      <!-- ─── Label descriptions ─────────────────────────────────────── -->
+      <CollapsibleSection title="Label descriptions" expanded={false}>
+        <p class="mb-3 text-[10.5px] leading-relaxed text-muted-foreground">
+          GLiNER2 is label-conditioned: each description is a soft prompt
+          telling the model what to look for. Edit these to improve recall on
+          Swedish-specific identifiers (personnummer, organisationsnummer,
+          bankgiro) — the model has not seen those formats during training.
+        </p>
+        <div class="flex flex-col gap-3">
+          {#each DEFAULT_PII_LABELS as label (label)}
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-2">
+                <span
+                  class="h-3.5 w-[3px] shrink-0 rounded-[1.5px]"
+                  style:background={editor.catMeta[label]?.color ?? '#888'}
+                ></span>
+                <span class="flex-1 text-[12px] font-medium text-foreground">
+                  {editor.catMeta[label]?.label ?? label}
+                </span>
+                <button
+                  type="button"
+                  class="rounded-sm p-1 text-text3 transition-colors hover:bg-surface2 hover:text-foreground"
+                  onclick={() => resetDescription(label)}
+                  title="Reset to default description"
+                  aria-label="Reset description"
+                >
+                  <RotateCw class="h-3 w-3" />
+                </button>
+              </div>
+              <textarea
+                rows="2"
+                class="min-w-0 resize-y rounded-sm border border-border bg-background px-2 py-1 text-[12px] leading-snug text-foreground outline-none focus:border-primary"
+                value={descriptionFor(label)}
+                oninput={(e) =>
+                  setDescription(label, (e.currentTarget as HTMLTextAreaElement).value)}
+              ></textarea>
+            </div>
           {/each}
         </div>
       </CollapsibleSection>

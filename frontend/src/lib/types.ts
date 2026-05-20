@@ -91,6 +91,14 @@ export type PipelineConfig = {
     threshold: number;
     /** Label keys to detect. Empty array = use the engine's default. */
     enabledLabels: string[];
+    /**
+     * Per-label natural-language descriptions sent to the model alongside
+     * the label key. GLiNER2 uses these as soft prompts — better descriptions
+     * usually mean better recall + precision, especially for Swedish-specific
+     * identifiers (personnummer, organisationsnummer, bankgiro) that don't
+     * appear verbatim in the model's training data.
+     */
+    descriptions: Record<string, string>;
   };
 };
 
@@ -109,6 +117,28 @@ export const DEFAULT_PII_LABELS = [
   'ip_address',
   'username',
 ] as const;
+
+/**
+ * Default GLiNER2 label descriptions. Match `PII_LABELS` in `backend/app.py`
+ * so the frontend and the Python service start from the same baseline.
+ * Users can override any of these in the Settings drawer.
+ */
+export const DEFAULT_LABEL_DESCRIPTIONS: Record<string, string> = {
+  person: 'Full name of a person',
+  email: 'Email address',
+  phone_number: 'Phone number, including country code variants',
+  address: 'Street address, postal address, or physical location',
+  date_of_birth: 'Date of birth',
+  personnummer:
+    'Swedish personal identity number, format YYMMDD-XXXX or YYYYMMDD-XXXX, 10 or 12 digits with hyphen or plus separator',
+  organisationsnummer: 'Swedish organisation number, format NNNNNN-NNNN, 10 digits with hyphen',
+  bank_account: 'Bank account number including Swedish bankgiro or plusgiro',
+  iban: 'International Bank Account Number, starts with two-letter country code',
+  card_number: 'Credit or debit card number',
+  url: 'URL or web link',
+  ip_address: 'IP address',
+  username: 'User name or login handle',
+};
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   paddleocr: {
@@ -132,6 +162,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     modelName: 'fastino/gliner2-privacy-filter-PII-multi',
     threshold: 0.5,
     enabledLabels: [...DEFAULT_PII_LABELS],
+    descriptions: { ...DEFAULT_LABEL_DESCRIPTIONS },
   },
 };
 
