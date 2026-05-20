@@ -9,15 +9,12 @@ Routes:
   GET  /                          → frontend/build/index.html
   GET  /_app/*                    → static SvelteKit chunks
   GET  /favicon.svg               → frontend/build/favicon.svg
-  GET  /api/examples              → list of example filenames
-  GET  /examples/{name}           → full image or ?thumb=1 preview
+  GET  /api/meta                  → category colours/labels (cacheable)
   POST /anonymize_screenshot      → queued compute (Gradio JS client)
 """
 
 from __future__ import annotations
 
-import functools
-import io
 import traceback
 from pathlib import Path
 
@@ -37,30 +34,7 @@ from app import (
 
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
-EXAMPLES_DIR = PROJECT_ROOT / "example-images"
 BUILD_DIR = PROJECT_ROOT / "frontend" / "build"
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-THUMBNAIL_SIZE = (480, 480)
-THUMBNAIL_QUALITY = 82
-
-
-def _is_image_file(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-
-
-def list_example_images() -> list[str]:
-    if not EXAMPLES_DIR.is_dir():
-        return []
-    return sorted(p.name for p in EXAMPLES_DIR.iterdir() if _is_image_file(p))
-
-
-@functools.lru_cache(maxsize=64)
-def build_thumbnail(name: str) -> bytes:
-    image = Image.open(EXAMPLES_DIR / name).convert("RGB")
-    image.thumbnail(THUMBNAIL_SIZE)
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
-    return buffer.getvalue()
 
 
 server = gr.Server()
@@ -78,30 +52,6 @@ server.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@server.get("/api/examples")
-async def api_examples():
-    return JSONResponse({"examples": list_example_images()})
-
-
-@server.get("/examples/{name}")
-async def get_example(name: str, thumb: int = 0):
-    safe_name = Path(name).name
-    if Path(safe_name).suffix.lower() not in IMAGE_EXTENSIONS:
-        return JSONResponse({"error": "invalid file type"}, 400)
-
-    path = EXAMPLES_DIR / safe_name
-    if not path.is_file():
-        return JSONResponse({"error": "not found"}, 404)
-
-    if thumb:
-        return Response(
-            content=build_thumbnail(safe_name),
-            media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-    return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
 
 
 @server.get("/api/meta")
@@ -176,7 +126,7 @@ else:
         return (
             "<h1>frontend not built</h1>"
             "<p>run <code>cd frontend &amp;&amp; bun install &amp;&amp; bun run build</code> "
-            "for production, or use <code>bun run dev</code> on port 5173.</p>"
+            "for production, or use <code>bun run dev</code> on port 5174.</p>"
         )
 
 

@@ -1,7 +1,7 @@
 /**
  * Talks to the Gradio Server.
  *
- *   - Dev: SvelteKit runs on :5173, Python on :7860. CORS is open on the
+ *   - Dev: SvelteKit runs on :5174, Python on :7860. CORS is open on the
  *     Python side so we connect directly.
  *   - Prod: Python serves the SvelteKit build from /; same origin.
  */
@@ -13,8 +13,6 @@ const GRADIO_URL = import.meta.env.DEV
   : typeof window !== 'undefined'
     ? window.location.origin
     : '';
-
-const HTTP_BASE = GRADIO_URL;
 
 let clientPromise: ReturnType<typeof Client.connect> | null = null;
 function getClient() {
@@ -32,40 +30,19 @@ export async function anonymizeScreenshot(file: File): Promise<AnonymizeResult> 
   return data ?? ({ error: 'no data returned' } as AnonymizeResult);
 }
 
-/** GET /api/examples — list of example filenames in the backend's example-images/ */
-export async function fetchExamples(): Promise<string[]> {
-  const r = await fetch(`${HTTP_BASE}/api/examples`);
-  if (!r.ok) throw new Error(`examples list: ${r.status}`);
-  const d = await r.json();
-  return (d.examples as string[]) ?? [];
-}
-
-/** Build URL for an example image (optionally a thumbnail). */
-export function exampleUrl(name: string, thumb = false): string {
-  return `${HTTP_BASE}/examples/${encodeURIComponent(name)}${thumb ? '?thumb=1' : ''}`;
-}
-
-/** Fetch an example as a File so we can route it through the same upload path. */
-export async function fetchExampleAsFile(name: string): Promise<File> {
-  const r = await fetch(exampleUrl(name));
-  if (!r.ok) throw new Error(`fetch failed: ${r.status}`);
-  const blob = await r.blob();
-  return new File([blob], name, { type: blob.type || 'image/png' });
-}
-
 /**
  * GET /api/meta — static category color/label table.
  * Cached in-memory because it never changes during a session.
  */
-let _metaPromise: Promise<Record<string, CatMeta>> | null = null;
+let metaPromise: Promise<Record<string, CatMeta>> | null = null;
 
 export function fetchMeta(): Promise<Record<string, CatMeta>> {
-  if (_metaPromise) return _metaPromise;
-  _metaPromise = (async () => {
-    const r = await fetch(`${HTTP_BASE}/api/meta`);
-    if (!r.ok) throw new Error(`meta: ${r.status}`);
-    const d = await r.json();
-    return (d.categories_meta as Record<string, CatMeta>) ?? {};
+  if (metaPromise) return metaPromise;
+  metaPromise = (async () => {
+    const response = await fetch(`${GRADIO_URL}/api/meta`);
+    if (!response.ok) throw new Error(`meta: ${response.status}`);
+    const data = await response.json();
+    return (data.categories_meta as Record<string, CatMeta>) ?? {};
   })();
-  return _metaPromise;
+  return metaPromise;
 }

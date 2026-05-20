@@ -39,6 +39,6 @@ the SvelteKit dev server can talk to it during showcase development.
 
 - `app.py` — pipeline code (PaddleOCR + GLiNER2 PII + span→box mapping)
 - `server.py` — Gradio `gr.Server` routes (queued `/anonymize_screenshot`,
-  static `/api/examples`, `/api/meta`, and the SvelteKit static mount)
+  static `/api/meta`, and the SvelteKit static mount)
 - `pyproject.toml` — uv project definition
 - `requirements.txt` — kept as a fallback for hosts that need pip

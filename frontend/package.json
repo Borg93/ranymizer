@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite dev --port 5174 --strictPort",
     "dev:local": "VITE_ENGINE=local vite dev --port 5174 --strictPort",
+    "dev:mock": "VITE_ENGINE=mock vite dev --port 5174 --strictPort",
     "build": "vite build",
     "build:local": "VITE_ENGINE=local vite build",
+    "build:mock": "VITE_ENGINE=mock vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "format": "biome format --write ./src",
