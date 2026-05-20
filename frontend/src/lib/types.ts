@@ -25,6 +25,14 @@ export type CatMeta = {
   label: string;
 };
 
+export type OcrLine = {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 export type AnonymizeResult = {
   filename: string;
   width: number;
@@ -32,6 +40,7 @@ export type AnonymizeResult = {
   boxes: Box[];
   text: string;
   spans: PiiSpan[];
+  ocr_lines?: OcrLine[];
   error?: string;
 };
 

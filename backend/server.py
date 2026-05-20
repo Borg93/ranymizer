@@ -76,7 +76,10 @@ server = gr.Server()
 # In prod everything is same-origin and this is a no-op.
 server.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -136,21 +139,30 @@ def anonymize_screenshot_api(image: FileData) -> dict:
 
         img = Image.open(path).convert("RGB")
         ocr = ocr_image(img)
-        if not ocr["text"].strip():
-            return {"error": "No text detected in the image."}
 
-        source_text, spans = run_pii_analysis(ocr["text"])
-        if source_text != ocr["text"]:
-            spans = [s for s in spans if s["end"] <= len(ocr["text"])]
-        boxes = map_spans_to_boxes(ocr["words"], spans)
+        spans: list = []
+        boxes: list = []
+        if ocr["text"].strip():
+            source_text, spans = run_pii_analysis(ocr["text"])
+            if source_text != ocr["text"]:
+                spans = [s for s in spans if s["end"] <= len(ocr["text"])]
+            boxes = map_spans_to_boxes(ocr["words"], spans)
+
+        # OCR line geometry surfaced so the frontend can toggle a debug overlay
+        # showing what detection found (independent of PII recognition).
+        ocr_lines = [
+            {"text": w["text"], "x": w["x"], "y": w["y"], "w": w["w"], "h": w["h"]}
+            for w in ocr["words"]
+        ]
 
         return {
-            "filename": Path(path).name,
-            "width":    img.width,
-            "height":   img.height,
-            "boxes":    boxes,
-            "text":     ocr["text"],
-            "spans":    spans,
+            "filename":  Path(path).name,
+            "width":     img.width,
+            "height":    img.height,
+            "boxes":     boxes,
+            "text":      ocr["text"],
+            "spans":     spans,
+            "ocr_lines": ocr_lines,
         }
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()

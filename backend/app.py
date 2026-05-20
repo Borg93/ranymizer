@@ -39,6 +39,23 @@ REQUEST_GPU = os.getenv("USE_GPU", "1").lower() not in {"0", "false", "no"}
 HAS_CUDA = torch.cuda.is_available() or (spaces is not None)
 DEVICE = "gpu:0" if REQUEST_GPU and HAS_CUDA else "cpu"
 
+# PaddleOCR 3.5 supports "5 major mainstream text types: Chinese, Pinyin,
+# Traditional Chinese, English, Japanese". For Western-European text we need
+# the Latin recognition model, which is auto-selected when lang is any
+# Latin-script language code (sv / de / fr / es / it / pt / …). Empirically
+# verified: lang="sv" -> latin_PP-OCRv5_mobile_rec.
+OCR_LANG = os.getenv("OCR_LANG", "sv")
+
+# Optional preprocessing. Each costs a bit of latency but improves recall on
+# scanned / rotated / skewed pages — turn on when redacting real-world docs.
+USE_DOC_ORIENTATION_CLASSIFY = os.getenv("USE_DOC_ORIENTATION_CLASSIFY", "0").lower() in {
+    "1", "true", "yes",
+}
+USE_DOC_UNWARPING = os.getenv("USE_DOC_UNWARPING", "0").lower() in {"1", "true", "yes"}
+USE_TEXTLINE_ORIENTATION = os.getenv("USE_TEXTLINE_ORIENTATION", "0").lower() in {
+    "1", "true", "yes",
+}
+
 # GLiNER2-PII model id.
 GLINER_MODEL = os.getenv("GLINER_MODEL", "fastino/gliner2-privacy-filter-PII-multi")
 
@@ -90,19 +107,28 @@ _GLINER = None
 
 
 def get_ocr() -> PaddleOCR:
-    """PaddleOCR 3.5 with transformers backend, PP-OCRv5_server (det+rec)."""
+    """PaddleOCR 3.5 with transformers backend, Latin-script recognition.
+
+    `lang=sv` (Swedish) triggers PaddleOCR's `latin_PP-OCRv5_mobile_rec`
+    model, which covers å/ä/ö and the rest of extended Latin. The default
+    (no `lang`) would load the Chinese-trained `PP-OCRv5_*_rec`, which
+    silently emits `□` for any non-Chinese/-English/-Japanese glyph.
+    """
     global _OCR
     if _OCR is None:
         dtype = os.getenv("INFERENCE_DTYPE", "float32")
-        print(f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  dtype={dtype}")
+        print(
+            f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  lang={OCR_LANG}  dtype={dtype}  "
+            f"orient={USE_DOC_ORIENTATION_CLASSIFY}  unwarp={USE_DOC_UNWARPING}  "
+            f"textline={USE_TEXTLINE_ORIENTATION}"
+        )
         _OCR = PaddleOCR(
             device=DEVICE,
             engine="transformers",
-            text_detection_model_name="PP-OCRv5_server_det",
-            text_recognition_model_name="PP-OCRv5_server_rec",
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
+            lang=OCR_LANG,
+            use_doc_orientation_classify=USE_DOC_ORIENTATION_CLASSIFY,
+            use_doc_unwarping=USE_DOC_UNWARPING,
+            use_textline_orientation=USE_TEXTLINE_ORIENTATION,
             engine_config={"dtype": dtype},
         )
     return _OCR
@@ -167,11 +193,18 @@ def ocr_image(img: Image.Image) -> dict[str, Any]:
     lines: list[dict[str, Any]] = []
     text_parts: list[str] = []
     offset = 0
+    raw_polys = 0
+    raw_texts = 0
 
     for page in result:
         page_json = getattr(page, "json", {}) or {}
-        rec_texts = page_json.get("rec_texts", []) or []
-        rec_polys = page_json.get("rec_polys", []) or []
+        # PaddleOCR 3.5 transformers engine nests fields under "res".
+        # Fall back to the top level for forward/backward compatibility.
+        page_res = page_json.get("res", page_json) or {}
+        rec_texts = page_res.get("rec_texts", []) or []
+        rec_polys = page_res.get("rec_polys", []) or []
+        raw_polys += len(rec_polys)
+        raw_texts += sum(1 for t in rec_texts if str(t or "").strip())
 
         for txt, poly in zip(rec_texts, rec_polys):
             txt = str(txt) if txt is not None else ""
@@ -196,6 +229,11 @@ def ocr_image(img: Image.Image) -> dict[str, Any]:
             text_parts.append(txt)
             offset = end + 1  # account for the '\n' separator
 
+    print(
+        f"[ocr] image={img.width}x{img.height}  "
+        f"detected_polys={raw_polys}  recognised_texts={raw_texts}  "
+        f"kept_lines={len(lines)}"
+    )
     return {"text": "\n".join(text_parts), "words": lines}
 
 

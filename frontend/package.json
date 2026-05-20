@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 5173",
-    "dev:local": "VITE_ENGINE=local vite dev --port 5173",
+    "dev": "vite dev --port 5174 --strictPort",
+    "dev:local": "VITE_ENGINE=local vite dev --port 5174 --strictPort",
     "build": "vite build",
     "build:local": "VITE_ENGINE=local vite build",
     "preview": "vite preview",

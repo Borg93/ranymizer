@@ -1,10 +1,40 @@
 <script lang="ts">
-import { ChevronLeft, ChevronRight } from 'lucide-svelte';
+import { ChevronLeft, ChevronRight, Sun, Moon, Rows3 } from 'lucide-svelte';
 import { toast } from 'svelte-sonner';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import Canvas from './Canvas.svelte';
 import Sidebar from './Sidebar.svelte';
+import TextSidebar from './TextSidebar.svelte';
+import Thumbnails from './Thumbnails.svelte';
+
+// Editable page-number input — Enter jumps directly to that page.
+function onPageInput(e: Event) {
+  const t = e.currentTarget as HTMLInputElement;
+  const n = parseInt(t.value, 10);
+  if (Number.isFinite(n)) editor.goTo(n - 1);
+  t.value = String(editor.activeIdx + 1);
+}
+
+// Theme toggle — `class="dark"` on <html> is the default (set in app.html).
+// We persist the choice in localStorage so it survives reloads.
+let theme = $state<'dark' | 'light'>('dark');
+
+$effect(() => {
+  const saved = localStorage.getItem('ranymizer-theme');
+  if (saved === 'light' || saved === 'dark') theme = saved;
+});
+
+$effect(() => {
+  const root = document.documentElement;
+  root.classList.toggle('dark', theme === 'dark');
+  root.classList.toggle('light', theme === 'light');
+  localStorage.setItem('ranymizer-theme', theme);
+});
+
+function toggleTheme() {
+  theme = theme === 'dark' ? 'light' : 'dark';
+}
 
 function downloadImage() {
   const c = editor.renderExportCanvas();
@@ -115,55 +145,99 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
 <svelte:window onkeydown={onKeyDown} />
 
 <div class="flex h-screen flex-col">
-  <header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
-    <div class="flex items-center gap-2">
-      <svg class="h-[18px] w-[18px] text-foreground" viewBox="0 0 20 20" aria-hidden="true">
-        <rect x="2" y="4" width="12" height="3" rx="0.5" fill="currentColor" />
-        <rect x="2" y="9" width="16" height="3" rx="0.5" fill="currentColor" />
-        <rect x="2" y="14" width="8" height="3" rx="0.5" fill="currentColor" />
-      </svg>
-      <span class="text-[13.5px] font-medium tracking-tight">Ranymizer</span>
+  <header class="grid h-10 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-border bg-background px-4">
+    <!-- Left: brand + filename -->
+    <div class="flex min-w-0 items-center gap-3">
+      <div class="flex items-center gap-2">
+        <svg class="h-[18px] w-[18px] text-foreground" viewBox="0 0 20 20" aria-hidden="true">
+          <rect x="2" y="4" width="12" height="3" rx="0.5" fill="currentColor" />
+          <rect x="2" y="9" width="16" height="3" rx="0.5" fill="currentColor" />
+          <rect x="2" y="14" width="8" height="3" rx="0.5" fill="currentColor" />
+        </svg>
+        <span class="text-[13.5px] font-medium tracking-tight">Ranymizer</span>
+      </div>
+
+      <span
+        class="truncate rounded-sm border border-border px-1.5 py-px font-mono text-[11px] text-muted-foreground"
+      >
+        {meta}
+      </span>
     </div>
 
-    <span
-      class="rounded-sm border border-border px-1.5 py-px font-mono text-[11px] text-muted-foreground"
-    >
-      {meta}
-    </span>
+    <!-- Center: pagination (visually centered in the nav bar) -->
+    <div class="flex justify-center">
+      {#if editor.hasMultiple}
+        <div
+          class="flex items-center gap-1 rounded-md border border-border bg-card p-0.5"
+          title="Switch page (PageUp / PageDown). Type a number to jump."
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 w-6 p-0"
+            disabled={editor.activeIdx === 0}
+            onclick={() => editor.prev()}
+            aria-label="Previous page"
+          >
+            <ChevronLeft class="h-3.5 w-3.5" />
+          </Button>
+          <input
+            type="number"
+            min="1"
+            max={editor.pageCount}
+            value={editor.activeIdx + 1}
+            onchange={onPageInput}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+            }}
+            class="h-5 w-9 rounded-sm border border-transparent bg-transparent px-1 text-center font-mono text-[11px] tabular-nums text-foreground focus:border-border focus:bg-background focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            aria-label="Page number"
+          />
+          <span class="px-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+            / {editor.pageCount}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 w-6 p-0"
+            disabled={editor.activeIdx === editor.pageCount - 1}
+            onclick={() => editor.next()}
+            aria-label="Next page"
+          >
+            <ChevronRight class="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="ml-0.5 h-6 w-6 p-0 data-[active=true]:bg-accent"
+            data-active={editor.showThumbnails}
+            onclick={() => (editor.showThumbnails = !editor.showThumbnails)}
+            aria-label="Toggle thumbnails"
+            title={editor.showThumbnails ? 'Hide thumbnails' : 'Show thumbnails'}
+          >
+            <Rows3 class="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      {/if}
+    </div>
 
-    {#if editor.hasMultiple}
-      <div
-        class="ml-1 flex items-center gap-1 rounded-md border border-border bg-card p-0.5"
-        title="Switch page (PageUp / PageDown)"
+    <!-- Right: actions -->
+    <div class="flex items-center justify-end">
+      <Button
+        variant="secondary"
+        size="sm"
+        class="h-7 w-7 border border-border p-0 text-foreground"
+        onclick={toggleTheme}
+        aria-label="Toggle theme"
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 w-6 p-0"
-          disabled={editor.activeIdx === 0}
-          onclick={() => editor.prev()}
-          aria-label="Previous page"
-        >
-          <ChevronLeft class="h-3.5 w-3.5" />
-        </Button>
-        <span class="px-1 font-mono text-[11px] tabular-nums text-foreground">
-          {editor.activeIdx + 1} / {editor.pageCount}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 w-6 p-0"
-          disabled={editor.activeIdx === editor.pageCount - 1}
-          onclick={() => editor.next()}
-          aria-label="Next page"
-        >
-          <ChevronRight class="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    {/if}
-
-    <div class="flex-1"></div>
-    <Button variant="outline" size="sm" onclick={() => editor.reset()}>new image</Button>
+        {#if theme === 'dark'}
+          <Sun class="h-3.5 w-3.5" />
+        {:else}
+          <Moon class="h-3.5 w-3.5" />
+        {/if}
+      </Button>
+    </div>
   </header>
 
   {#if editor.error}
@@ -175,7 +249,15 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
   {/if}
 
   <div class="flex min-h-0 flex-1 max-md:flex-col">
-    <Canvas />
+    <TextSidebar />
+    <!-- Canvas column owns its own footer (thumbnails) so the sidebars stay
+         full-height and aren't pushed up by the carousel. -->
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <Canvas />
+      {#if editor.hasMultiple && editor.showThumbnails}
+        <Thumbnails />
+      {/if}
+    </div>
     <Sidebar onDownload={downloadImage} onCopy={copyToClipboard} onExportText={exportText} />
   </div>
 </div>

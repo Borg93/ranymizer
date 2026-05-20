@@ -9,9 +9,45 @@ import type { EditorBox } from '$lib/types';
 let wrapEl = $state<HTMLDivElement>();
 let scrollEl: HTMLDivElement | undefined;
 
+// Pan state — spacebar or middle-mouse drags the scroll container.
+let spaceDown = $state(false);
+let panState = $state<{
+  startX: number;
+  startY: number;
+  scrollLeft: number;
+  scrollTop: number;
+} | null>(null);
+
 function fitToContainer() {
   if (scrollEl && editor.img) editor.zoomFit(scrollEl.clientWidth, scrollEl.clientHeight);
 }
+
+// Re-fit whenever a new image (or page) loads. Using filename + dimensions
+// as the trigger because img is an HTMLImageElement that may be reused.
+$effect(() => {
+  if (!editor.img || !scrollEl) return;
+  // Read these so the effect re-runs when the active page changes.
+  void editor.filename;
+  void editor.width;
+  void editor.height;
+  requestAnimationFrame(() => {
+    if (scrollEl) editor.zoomFit(scrollEl.clientWidth, scrollEl.clientHeight);
+  });
+});
+
+// When the selection changes (e.g. via the left sidebar row click), scroll
+// the canvas so the selected box ends up roughly centred in the viewport.
+$effect(() => {
+  const sel = editor.selectedBox;
+  if (!sel || !scrollEl) return;
+  const cx = (sel.x + sel.w / 2) * editor.scale;
+  const cy = (sel.y + sel.h / 2) * editor.scale;
+  scrollEl.scrollTo({
+    left: cx - scrollEl.clientWidth / 2,
+    top: cy - scrollEl.clientHeight / 2,
+    behavior: 'smooth',
+  });
+});
 
 function cssVar(name: string): string {
   if (typeof document === 'undefined') return '';
@@ -33,19 +69,70 @@ function paint(node: Element) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(editor.img, 0, 0);
 
-    ctx.fillStyle = '#000';
-    for (const b of editor.boxes) {
-      if (!editor.isVisible(b)) continue;
-      ctx.fillRect(b.x, b.y, b.w, b.h);
+    // OCR detection overlay (toggle in the sidebar). Drawn before PII masks
+    // so the black bars cleanly cover the lines they pass through.
+    if (editor.showOcrLines && editor.ocrLines.length > 0) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = Math.max(1, 1 / editor.scale);
+      for (const ln of editor.ocrLines) {
+        ctx.strokeRect(ln.x + 0.5, ln.y + 0.5, ln.w, ln.h);
+      }
+      ctx.restore();
+    }
+
+    if (editor.showCategoryColors) {
+      // Preview mode — paint each box with its category color at maskAlpha so
+      // the underlying image is partially visible. Custom boxes use a neutral
+      // grey since they have no semantic category.
+      ctx.save();
+      ctx.globalAlpha = editor.maskAlpha;
+      for (const b of editor.boxes) {
+        if (!editor.isVisible(b)) continue;
+        const color = b.custom ? '#9ca3af' : (editor.catMeta[b.label]?.color ?? '#9ca3af');
+        ctx.fillStyle = color;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+      }
+      ctx.restore();
+    } else {
+      ctx.fillStyle = editor.maskColor;
+      for (const b of editor.boxes) {
+        if (!editor.isVisible(b)) continue;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+      }
+    }
+
+    // Overlap warning — solid amber stroke on any visible box that shares
+    // area with another. Drawn after masks so it sits on top of black bars.
+    if (editor.overlappingIds.size > 0) {
+      ctx.save();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = Math.max(1.5, 2 / editor.scale);
+      for (const b of editor.boxes) {
+        if (!editor.isVisible(b)) continue;
+        if (!editor.overlappingIds.has(b.id)) continue;
+        ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w, b.h);
+      }
+      ctx.restore();
     }
 
     const sel = editor.selectedBox;
     if (sel) {
       ctx.save();
-      ctx.strokeStyle = cssVar('--primary') || '#818cf8';
-      ctx.lineWidth = Math.max(1, 1.5 / editor.scale);
-      ctx.setLineDash([5 / editor.scale, 3 / editor.scale]);
+      const primary = cssVar('--primary') || '#818cf8';
+      // Glow halo so the selection pops against both colored masks and the
+      // solid mask color (even if the user picks a similar hue).
+      ctx.shadowColor = primary;
+      ctx.shadowBlur = 12 / editor.scale;
+      ctx.strokeStyle = primary;
+      ctx.lineWidth = Math.max(2, 2.5 / editor.scale);
       ctx.strokeRect(sel.x - 1, sel.y - 1, sel.w + 2, sel.h + 2);
+      // A faint inner dashed line for extra contrast on light masks.
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, 1 / editor.scale);
+      ctx.setLineDash([4 / editor.scale, 3 / editor.scale]);
+      ctx.strokeRect(sel.x, sel.y, sel.w, sel.h);
       ctx.restore();
     }
 
@@ -93,7 +180,23 @@ function hitTest(x: number, y: number): EditorBox | null {
   return null;
 }
 
+function startPan(ev: MouseEvent) {
+  if (!scrollEl) return;
+  ev.preventDefault();
+  panState = {
+    startX: ev.clientX,
+    startY: ev.clientY,
+    scrollLeft: scrollEl.scrollLeft,
+    scrollTop: scrollEl.scrollTop,
+  };
+}
+
 function onMouseDown(ev: MouseEvent) {
+  // Pan modes: right button, middle button, or left button while space is held.
+  if (ev.button === 1 || ev.button === 2 || (ev.button === 0 && spaceDown)) {
+    startPan(ev);
+    return;
+  }
   if (ev.button !== 0) return;
   ev.preventDefault();
   const { x, y } = canvasXY(ev);
@@ -123,6 +226,11 @@ function onMouseDown(ev: MouseEvent) {
 }
 
 function onMouseMove(ev: MouseEvent) {
+  if (panState && scrollEl) {
+    scrollEl.scrollLeft = panState.scrollLeft - (ev.clientX - panState.startX);
+    scrollEl.scrollTop = panState.scrollTop - (ev.clientY - panState.startY);
+    return;
+  }
   if (!wrapEl) return;
   const rect = wrapEl.getBoundingClientRect();
   const inside =
@@ -163,6 +271,10 @@ function onMouseMove(ev: MouseEvent) {
 }
 
 function onMouseUp() {
+  if (panState) {
+    panState = null;
+    return;
+  }
   if (!editor.drag) return;
   if (editor.drag.type === 'draw') {
     const b = editor.drag.newBox;
@@ -171,12 +283,36 @@ function onMouseUp() {
   editor.drag = null;
 }
 
+function onKeyDown(ev: KeyboardEvent) {
+  if (ev.code !== 'Space' || ev.repeat) return;
+  const t = ev.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  ev.preventDefault();
+  spaceDown = true;
+}
+
+// Ctrl/Cmd + wheel zooms smoothly; plain wheel falls through to scrolling.
+// Multiplier per pixel of deltaY — small enough that trackpad pinch-zoom
+// (which emits many tiny events with ctrlKey set) feels continuous, not jumpy.
+function onWheel(ev: WheelEvent) {
+  if (!(ev.ctrlKey || ev.metaKey)) return;
+  ev.preventDefault();
+  const factor = Math.exp(-ev.deltaY * 0.0015);
+  editor.zoomBy(factor);
+}
+
+function onKeyUp(ev: KeyboardEvent) {
+  if (ev.code === 'Space') spaceDown = false;
+}
+
 const overBox = $derived.by(() => {
   if (editor.mode !== 'select' || !editor.cursor) return false;
   return hitTest(editor.cursor.x, editor.cursor.y) !== null;
 });
 
 const cursorClass = $derived.by(() => {
+  if (panState) return 'cursor-grabbing';
+  if (spaceDown) return 'cursor-grab';
   if (editor.mode === 'draw') return 'cursor-crosshair';
   if (editor.drag?.type === 'move') return 'cursor-grabbing';
   if (overBox) return 'cursor-move';
@@ -184,15 +320,26 @@ const cursorClass = $derived.by(() => {
 });
 </script>
 
-<svelte:window onmousemove={onMouseMove} onmouseup={onMouseUp} onresize={fitToContainer} />
+<svelte:window
+  onmousemove={onMouseMove}
+  onmouseup={onMouseUp}
+  onresize={fitToContainer}
+  onkeydown={onKeyDown}
+  onkeyup={onKeyUp}
+/>
 
 <div class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-  <div class="canvas-scroll relative flex-1 overflow-auto" {@attach setupScroll}>
-    <div class="relative flex min-h-full min-w-full items-start justify-start p-7">
+  <div
+    class="canvas-scroll relative flex-1 overflow-auto"
+    onwheel={onWheel}
+    {@attach setupScroll}
+  >
+    <div class="relative flex min-h-full min-w-full items-center justify-center p-7">
       <div
         class="relative shrink-0 {cursorClass}"
         bind:this={wrapEl}
         onmousedown={onMouseDown}
+        oncontextmenu={(e) => e.preventDefault()}
         role="presentation"
       >
         <canvas

@@ -1,0 +1,23 @@
+# Gradio + FastAPI
+gradio>=6.14.0
+
+# ZeroGPU support (no-op outside HF Spaces)
+spaces
+
+# PaddleOCR 3.5 with the Transformers backend.
+# Per https://huggingface.co/blog/PaddlePaddle/paddleocr-transformers
+paddleocr==3.5.0
+paddlex==3.5.2
+transformers>=5.4.0
+
+# Torch — HF Spaces base image provides a CUDA build matched to the runtime.
+torch>=2.4
+torchvision
+
+# GLiNER2 (local install includes torch/peft/etc.)
+gliner2[local]
+
+# Misc
+Pillow>=10.0
+numpy>=1.26
+fastapi

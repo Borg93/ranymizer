@@ -34,6 +34,18 @@ dependencies = [
 package = false                 # this is an app, not a library
 managed = true
 
+# Pull torch/torchvision from PyTorch's CUDA 12.8 index (matches driver 570.x).
+# HF Spaces ZeroGPU/Docker images install their own torch — this only affects
+# local dev sync via `uv sync`.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

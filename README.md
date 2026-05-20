@@ -1,3 +1,15 @@
+---
+title: Ranymizer
+emoji: 🔒
+colorFrom: indigo
+colorTo: purple
+sdk: gradio
+sdk_version: 6.14.0
+app_file: backend/server.py
+pinned: true
+license: gpl-3.0
+---
+
 # Ranymizer — Swedish screenshot redactor
 
 OCR → PII detection → canvas editor for redacting Swedish screenshots

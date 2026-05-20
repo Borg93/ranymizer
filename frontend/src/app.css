@@ -64,24 +64,9 @@
   --radius: 0.375rem;
 }
 
-/* Light mode mirrors the original media query */
-@media (prefers-color-scheme: light) {
-  :root:not(.dark) {
-    --bg: #fafaf8;
-    --surface: #ffffff;
-    --surface2: #f4f4f2;
-    --surface3: #eeeeec;
-    --border-c: rgba(0, 0, 0, 0.07);
-    --border-strong: rgba(0, 0, 0, 0.16);
-    --text: #1c1c1e;
-    --text2: #515156;
-    --text3: #86868b;
-    --accent: #4f46e5;
-    --accent-dim: rgba(79, 70, 229, 0.08);
-  }
-}
-
-/* Manual light-class override (for the mode-watcher toggle if you add one) */
+/* Manual light-class override (opt-in via .light on <html>). Auto-switching
+ * with the OS prefers-color-scheme was removed — the app is dark by default
+ * (see class="dark" on <html> in app.html). */
 :root.light {
   --bg: #fafaf8;
   --surface: #ffffff;
