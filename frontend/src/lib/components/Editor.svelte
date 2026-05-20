@@ -220,7 +220,6 @@ function onKeyDown(e: KeyboardEvent) {
   else if (e.key === '-' || e.key === '_') editor.zoomStep(-1);
 }
 
-const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${editor.height}` : '—');
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
@@ -238,11 +237,6 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
         <span class="text-[13.5px] font-medium tracking-tight">Ranymizer</span>
       </div>
 
-      <span
-        class="truncate rounded-sm border border-border px-1.5 py-px font-mono text-[11px] text-muted-foreground"
-      >
-        {meta}
-      </span>
     </div>
 
     <!-- Center: pagination (visually centered in the nav bar) -->

@@ -458,6 +458,14 @@ const cursorClass = $derived.by(() => {
   <div
     class="flex h-[26px] shrink-0 items-center gap-3 border-t border-border bg-card px-3 font-mono text-[11px] text-text3"
   >
+    {#if editor.filename}
+      <span>file</span>
+      <span class="max-w-[40ch] truncate text-foreground" title={editor.filename}>
+        {editor.filename}
+      </span>
+      <span class="text-muted-foreground tabular-nums">{editor.width}×{editor.height}</span>
+      <span class="opacity-40">·</span>
+    {/if}
     <span>zoom</span>
     <span class="text-muted-foreground">{Math.round(editor.scale * 100)}%</span>
     <span class="opacity-40">·</span>
@@ -471,7 +479,12 @@ const cursorClass = $derived.by(() => {
       {editor.selectedBox ? `${editor.selectedBox.w}×${editor.selectedBox.h}` : '—'}
     </span>
     <span class="flex-1"></span>
-    <span>{editor.mode}</span>
+    {#if editor.hasMultiple}
+      <span>page</span>
+      <span class="text-muted-foreground tabular-nums">
+        {editor.activeIdx + 1} / {editor.pageCount}
+      </span>
+    {/if}
   </div>
 </div>
 
