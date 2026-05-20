@@ -4,10 +4,10 @@
  * browser-cache on so weights are fetched once then served offline.
  * See models.ts for the model-parity caveat.
  */
-import { pipeline, env, RawImage } from '@huggingface/transformers';
-import { resolveBackend, type BackendPreference } from './webgpu';
-import { OCR_MODEL, PII_MODEL } from './models';
+import { env, pipeline, RawImage } from '@huggingface/transformers';
 import type { Box, PiiSpan } from '../types';
+import { OCR_MODEL, PII_MODEL } from './models';
+import { type BackendPreference, resolveBackend } from './webgpu';
 
 env.useBrowserCache = true;
 

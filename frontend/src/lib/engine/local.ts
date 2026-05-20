@@ -1,8 +1,13 @@
 // Local engine: drives the inference worker. The image is transferred as an
 // ImageBitmap — never serialised to network or disk.
-import { LOCAL_CAT_META } from './models';
-import type { AnonymizerEngine, EngineProgress } from './types';
+//
+// PipelineConfig is accepted but not yet plumbed through to the worker.
+// TODO: forward config (threshold + enabled labels) to worker.ts so the
+// on-device GLiNER call respects user settings.
+
 import type { AnonymizeResult, CatMeta } from '../types';
+import { LOCAL_CAT_META } from './models';
+import type { AnalyzeOptions, AnonymizerEngine, EngineProgress } from './types';
 
 export function createLocalEngine(): AnonymizerEngine {
   let worker: Worker | null = null;
@@ -63,13 +68,13 @@ export function createLocalEngine(): AnonymizerEngine {
     async meta(): Promise<Record<string, CatMeta>> {
       return LOCAL_CAT_META;
     },
-    async analyze(file: File, onProgress?: (p: EngineProgress) => void): Promise<AnonymizeResult> {
+    async analyze(file: File, opts?: AnalyzeOptions): Promise<AnonymizeResult> {
       const w = getWorker();
       const id = ++seq;
       const image = await createImageBitmap(file);
-      onProgress?.({ phase: 'analyzing' });
+      opts?.onProgress?.({ phase: 'analyzing' });
       return new Promise<AnonymizeResult>((resolve, reject) => {
-        pending.set(id, { resolve, reject, onProgress });
+        pending.set(id, { resolve, reject, onProgress: opts?.onProgress });
         w.postMessage({ type: 'analyze', data: { id, image } }, [image]);
       }).then((r) => ({ ...r, filename: r.filename || file.name }));
     },

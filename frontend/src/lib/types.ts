@@ -51,8 +51,52 @@ export type EditorBox = Box & {
   custom: boolean;
 };
 
-export type View = 'landing' | 'editor';
 export type Mode = 'select' | 'draw';
+
+/**
+ * User-configurable pipeline knobs. Persisted to localStorage, read by the
+ * engine before each analyse(). Engines that don't honour a field should
+ * ignore it gracefully — mock honours all of them, backend honours what
+ * server.py supports.
+ */
+export type PipelineConfig = {
+  gliner: {
+    /** Confidence floor (0..1). Hits below this are dropped. */
+    threshold: number;
+    /** Label keys to detect. Empty array = use the engine's default. */
+    enabledLabels: string[];
+  };
+  ocr: {
+    useDocOrientationClassify: boolean;
+    useDocUnwarping: boolean;
+    useTextlineOrientation: boolean;
+  };
+};
+
+export const DEFAULT_PII_LABELS = [
+  'person',
+  'email',
+  'phone_number',
+  'address',
+  'date_of_birth',
+  'personnummer',
+  'organisationsnummer',
+  'bank_account',
+  'iban',
+  'card_number',
+  'url',
+  'ip_address',
+  'username',
+] as const;
+
+export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
+  gliner: { threshold: 0.5, enabledLabels: [...DEFAULT_PII_LABELS] },
+  ocr: {
+    useDocOrientationClassify: false,
+    useDocUnwarping: false,
+    useTextlineOrientation: false,
+  },
+};
 
 export type DragState =
   | { type: 'draw'; startX: number; startY: number; newBox: Box }

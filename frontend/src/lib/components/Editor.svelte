@@ -1,10 +1,22 @@
 <script lang="ts">
-import { ChevronLeft, ChevronRight, Sun, Moon, Rows3, FilePlus2 } from 'lucide-svelte';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Sun,
+  Moon,
+  Rows3,
+  FilePlus2,
+  Play,
+  Settings2,
+  Undo2,
+  Redo2,
+} from 'lucide-svelte';
 import { toast } from 'svelte-sonner';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import Canvas from './Canvas.svelte';
 import Sidebar from './Sidebar.svelte';
+import SettingsDrawer from './SettingsDrawer.svelte';
 import TextSidebar from './TextSidebar.svelte';
 import Thumbnails from './Thumbnails.svelte';
 
@@ -109,6 +121,17 @@ function onKeyDown(e: KeyboardEvent) {
   if (cmd && e.shiftKey && e.key.toLowerCase() === 'c') {
     e.preventDefault();
     copyToClipboard();
+    return;
+  }
+  if (cmd && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) editor.redo();
+    else editor.undo();
+    return;
+  }
+  if (cmd && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    editor.redo();
     return;
   }
 
@@ -246,11 +269,58 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
         size="sm"
         class="h-7 gap-1.5 border border-border px-2 text-foreground"
         onclick={() => addFileInput?.click()}
-        title="Upload another image or PDF (appends to current set)"
+        title={editor.hasImage ? 'Append another image or PDF' : 'Upload an image or PDF'}
       >
         <FilePlus2 class="h-3.5 w-3.5" />
         <span class="text-[12px] font-medium tracking-tight">Add</span>
       </Button>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-7 w-7 p-0"
+        disabled={!editor.canUndo}
+        onclick={() => editor.undo()}
+        aria-label="Undo"
+        title="Undo (⌘Z)"
+      >
+        <Undo2 class="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-7 w-7 p-0"
+        disabled={!editor.canRedo}
+        onclick={() => editor.redo()}
+        aria-label="Redo"
+        title="Redo (⌘⇧Z)"
+      >
+        <Redo2 class="h-3.5 w-3.5" />
+      </Button>
+
+      <Button
+        variant="default"
+        size="sm"
+        class="h-7 gap-1.5 px-2"
+        disabled={!editor.hasImage || editor.loading}
+        onclick={() => editor.run()}
+        title="Run the pipeline on all pages with the current settings"
+      >
+        <Play class="h-3.5 w-3.5" />
+        <span class="text-[12px] font-medium tracking-tight">Run</span>
+      </Button>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        class="h-7 w-7 border border-border p-0 text-foreground"
+        onclick={() => (editor.settingsOpen = !editor.settingsOpen)}
+        aria-label="Pipeline settings"
+        title="Pipeline settings"
+      >
+        <Settings2 class="h-3.5 w-3.5" />
+      </Button>
+
       <Button
         variant="secondary"
         size="sm"
@@ -277,7 +347,9 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
   {/if}
 
   <div class="flex min-h-0 flex-1 max-md:flex-col">
-    <TextSidebar />
+    {#if editor.hasImage}
+      <TextSidebar />
+    {/if}
     <!-- Canvas column owns its own footer (thumbnails) so the sidebars stay
          full-height and aren't pushed up by the carousel. -->
     <div class="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -286,6 +358,10 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
         <Thumbnails />
       {/if}
     </div>
-    <Sidebar onDownload={downloadImage} onCopy={copyToClipboard} onExportText={exportText} />
+    {#if editor.hasImage}
+      <Sidebar onDownload={downloadImage} onCopy={copyToClipboard} onExportText={exportText} />
+    {/if}
   </div>
 </div>
+
+<SettingsDrawer />

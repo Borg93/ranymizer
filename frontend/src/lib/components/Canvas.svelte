@@ -1,5 +1,5 @@
 <script lang="ts">
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-svelte';
+import { ZoomIn, ZoomOut, Maximize2, Upload } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { Separator } from '$lib/components/ui/separator';
@@ -212,6 +212,7 @@ function onMouseDown(ev: MouseEvent) {
     };
   } else if (hit) {
     editor.selected = hit.id;
+    editor.beginMove();
     editor.drag = {
       type: 'move',
       startX: x,
@@ -310,6 +311,21 @@ const overBox = $derived.by(() => {
   return hitTest(editor.cursor.x, editor.cursor.y) !== null;
 });
 
+// Empty-state dropzone (shown only when no pages have been uploaded yet).
+let dropzoneDragging = $state(false);
+function onDropzoneDrop(event: DragEvent) {
+  event.preventDefault();
+  dropzoneDragging = false;
+  const files = event.dataTransfer?.files;
+  if (files && files.length) editor.uploadFiles(Array.from(files));
+}
+function onDropzoneFiles(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  const files = input.files ? Array.from(input.files) : [];
+  if (files.length) editor.uploadFiles(files);
+  input.value = '';
+}
+
 const cursorClass = $derived.by(() => {
   if (panState) return 'cursor-grabbing';
   if (spaceDown) return 'cursor-grab';
@@ -335,20 +351,52 @@ const cursorClass = $derived.by(() => {
     {@attach setupScroll}
   >
     <div class="relative flex min-h-full min-w-full items-center justify-center p-7">
-      <div
-        class="relative shrink-0 {cursorClass}"
-        bind:this={wrapEl}
-        onmousedown={onMouseDown}
-        oncontextmenu={(e) => e.preventDefault()}
-        role="presentation"
-      >
-        <canvas
-          class="block"
-          style:width="{editor.width * editor.scale}px"
-          style:height="{editor.height * editor.scale}px"
-          {@attach paint}
-        ></canvas>
-      </div>
+      {#if editor.hasImage}
+        <div
+          class="relative shrink-0 {cursorClass}"
+          bind:this={wrapEl}
+          onmousedown={onMouseDown}
+          oncontextmenu={(e) => e.preventDefault()}
+          role="presentation"
+        >
+          <canvas
+            class="block"
+            style:width="{editor.width * editor.scale}px"
+            style:height="{editor.height * editor.scale}px"
+            {@attach paint}
+          ></canvas>
+        </div>
+      {:else}
+        <label
+          class="dropzone-empty flex aspect-[3/1] w-full max-w-[640px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card transition-colors hover:border-primary hover:bg-accent"
+          class:dragover={dropzoneDragging}
+          ondragenter={(e) => {
+            e.preventDefault();
+            dropzoneDragging = true;
+          }}
+          ondragover={(e) => {
+            e.preventDefault();
+            dropzoneDragging = true;
+          }}
+          ondragleave={() => (dropzoneDragging = false)}
+          ondrop={onDropzoneDrop}
+        >
+          <input
+            type="file"
+            accept="application/pdf,image/png,image/jpeg,image/webp,image/bmp,image/tiff"
+            multiple
+            class="absolute inset-0 cursor-pointer opacity-0"
+            onchange={onDropzoneFiles}
+          />
+          <Upload class="h-7 w-7 text-muted-foreground" strokeWidth={1.5} />
+          <div class="text-[13.5px] font-medium text-foreground">
+            Drop images or a PDF, paste, or click to browse
+          </div>
+          <div class="font-mono text-[11px] text-muted-foreground">
+            png · jpg · webp · bmp · tiff · pdf · ⌘V also works
+          </div>
+        </label>
+      {/if}
     </div>
   </div>
 

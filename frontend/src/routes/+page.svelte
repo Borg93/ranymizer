@@ -1,34 +1,27 @@
 <script lang="ts">
 import { Toaster } from 'svelte-sonner';
-import Landing from '$lib/components/Landing.svelte';
 import Editor from '$lib/components/Editor.svelte';
 import Loading from '$lib/components/Loading.svelte';
 import { editor } from '$lib/state.svelte';
 
-function handlePaste(e: ClipboardEvent) {
-  if (editor.view !== 'landing') return;
-  const items = e.clipboardData?.items;
+function handlePaste(event: ClipboardEvent): void {
+  if (editor.hasImage) return; // editing in-flight; let the focused element handle paste
+  const items = event.clipboardData?.items;
   if (!items) return;
-  for (const it of items) {
-    if (it.type?.startsWith('image/')) {
-      const f = it.getAsFile();
-      if (f) {
-        editor.upload(f);
-        e.preventDefault();
-        return;
-      }
-    }
+  for (const item of items) {
+    if (!item.type?.startsWith('image/')) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    editor.upload(file);
+    event.preventDefault();
+    return;
   }
 }
 </script>
 
 <svelte:window onpaste={handlePaste} />
 
-{#if editor.view === 'landing'}
-  <Landing />
-{:else}
-  <Editor />
-{/if}
+<Editor />
 
 {#if editor.loading}
   <Loading />

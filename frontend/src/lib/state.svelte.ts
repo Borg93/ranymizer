@@ -13,15 +13,16 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { engine } from './engine';
 import { isPdf, pdfToImageFiles } from './pdf';
-import type {
-  AnonymizeResult,
-  CatMeta,
-  DragState,
-  EditorBox,
-  Mode,
-  OcrLine,
-  PiiSpan,
-  View,
+import {
+  type AnonymizeResult,
+  type CatMeta,
+  DEFAULT_PIPELINE_CONFIG,
+  type DragState,
+  type EditorBox,
+  type Mode,
+  type OcrLine,
+  type PiiSpan,
+  type PipelineConfig,
 } from './types';
 
 type Page = {
@@ -34,15 +35,37 @@ type Page = {
   spans: PiiSpan[];
   boxes: EditorBox[];
   ocrLines: OcrLine[];
+  /** Original (or PDF-rasterised) file kept so Run can re-analyse without a re-upload. */
+  file: File;
 };
 
+const PIPELINE_CONFIG_KEY = 'ranymizer:pipeline-config';
+
+function loadPipelineConfig(): PipelineConfig {
+  if (typeof localStorage === 'undefined') return structuredClone(DEFAULT_PIPELINE_CONFIG);
+  try {
+    const raw = localStorage.getItem(PIPELINE_CONFIG_KEY);
+    if (!raw) return structuredClone(DEFAULT_PIPELINE_CONFIG);
+    const parsed = JSON.parse(raw) as Partial<PipelineConfig>;
+    return {
+      gliner: { ...DEFAULT_PIPELINE_CONFIG.gliner, ...(parsed.gliner ?? {}) },
+      ocr: { ...DEFAULT_PIPELINE_CONFIG.ocr, ...(parsed.ocr ?? {}) },
+    };
+  } catch {
+    return structuredClone(DEFAULT_PIPELINE_CONFIG);
+  }
+}
+
 export class EditorState {
-  // ── view / lifecycle ──────────────────────────────────────────────
-  view = $state<View>('landing');
+  // ── lifecycle ─────────────────────────────────────────────────────
   loading = $state(false);
   loadingMessage = $state(''); // local-engine status / model-download text
   loadingProgress = $state<{ done: number; total: number } | null>(null);
   error = $state<string | null>(null);
+
+  // ── pipeline config (persisted) ───────────────────────────────────
+  pipelineConfig = $state<PipelineConfig>(loadPipelineConfig());
+  settingsOpen = $state(false);
 
   // ── live working copy of the active page ──────────────────────────
   img = $state<HTMLImageElement | null>(null);
@@ -83,6 +106,62 @@ export class EditorState {
   #nextId = 1;
   #uploadId = 0;
   #objectUrls: string[] = [];
+
+  // ── undo / redo (per-page box history) ────────────────────────────
+  // Stack of `boxes[]` snapshots keyed by activeIdx. Each box mutation
+  // pushes the *previous* state onto undo; redo is populated when we pop.
+  // Capped to UNDO_LIMIT entries per page so memory stays bounded.
+  #undoStacks = new Map<number, EditorBox[][]>();
+  #redoStacks = new Map<number, EditorBox[][]>();
+  static readonly #UNDO_LIMIT = 100;
+  canUndo = $state(false);
+  canRedo = $state(false);
+
+  #refreshUndoFlags(): void {
+    this.canUndo = (this.#undoStacks.get(this.activeIdx)?.length ?? 0) > 0;
+    this.canRedo = (this.#redoStacks.get(this.activeIdx)?.length ?? 0) > 0;
+  }
+
+  /**
+   * Take a snapshot of the current page's boxes before a mutation.
+   * Pushes onto undo, clears redo (new edit invalidates the redo branch).
+   * Boxes are deep-cloned so later in-place edits don't leak into history.
+   */
+  #snapshotForUndo(): void {
+    const snapshot = this.boxes.map((b) => ({ ...b }));
+    const stack = this.#undoStacks.get(this.activeIdx) ?? [];
+    stack.push(snapshot);
+    if (stack.length > EditorState.#UNDO_LIMIT) stack.shift();
+    this.#undoStacks.set(this.activeIdx, stack);
+    this.#redoStacks.delete(this.activeIdx);
+    this.#refreshUndoFlags();
+  }
+
+  undo(): void {
+    const stack = this.#undoStacks.get(this.activeIdx);
+    if (!stack || stack.length === 0) return;
+    const previous = stack.pop();
+    if (!previous) return;
+    const redoStack = this.#redoStacks.get(this.activeIdx) ?? [];
+    redoStack.push(this.boxes.map((b) => ({ ...b })));
+    this.#redoStacks.set(this.activeIdx, redoStack);
+    this.boxes = previous;
+    this.selected = null;
+    this.#refreshUndoFlags();
+  }
+
+  redo(): void {
+    const stack = this.#redoStacks.get(this.activeIdx);
+    if (!stack || stack.length === 0) return;
+    const next = stack.pop();
+    if (!next) return;
+    const undoStack = this.#undoStacks.get(this.activeIdx) ?? [];
+    undoStack.push(this.boxes.map((b) => ({ ...b })));
+    this.#undoStacks.set(this.activeIdx, undoStack);
+    this.boxes = next;
+    this.selected = null;
+    this.#refreshUndoFlags();
+  }
 
   // ── derived ───────────────────────────────────────────────────────
   catCounts = $derived.by(() => {
@@ -141,6 +220,7 @@ export class EditorState {
 
   pageCount = $derived(this.pages.length);
   hasMultiple = $derived(this.pages.length > 1);
+  hasImage = $derived(this.pages.length > 0);
 
   // ── helpers ───────────────────────────────────────────────────────
   isVisible(b: EditorBox): boolean {
@@ -184,7 +264,6 @@ export class EditorState {
     this.loadingMessage = '';
     this.loadingProgress = null;
     this.error = null;
-    this.view = 'editor';
     if (opts.append) {
       // Snapshot the current working page so its in-flight edits aren't lost
       // when we navigate away to the first new page after analysis.
@@ -220,6 +299,8 @@ export class EditorState {
       return;
     }
 
+    // Hydrate catMeta on first upload so the sidebar/settings drawer can
+    // render category colours even before the user presses Run.
     const catMetaPromise = engine.meta().catch(() => ({}) as Record<string, CatMeta>);
     const firstNewIdx = this.pages.length;
 
@@ -227,40 +308,30 @@ export class EditorState {
       if (myId !== this.#uploadId) return;
       const file = expanded[i];
       this.loadingProgress = { done: i, total: expanded.length };
-      this.loadingMessage = `Analysing ${i + 1}/${expanded.length}: ${file.name}`;
+      this.loadingMessage = `Loading ${i + 1}/${expanded.length}: ${file.name}`;
 
       const objectUrl = URL.createObjectURL(file);
       this.#objectUrls.push(objectUrl);
 
       try {
-        const [img, result] = await Promise.all([
-          this.#loadImage(objectUrl),
-          engine.analyze(file, (p) => {
-            if (myId !== this.#uploadId) return;
-            if (p.phase === 'loading') {
-              this.loadingMessage =
-                p.percent != null ? `${p.message} ${Math.round(p.percent)}%` : p.message;
-            }
-          }),
-        ]);
-
+        const img = await this.#loadImage(objectUrl);
         if (myId !== this.#uploadId) return;
-        if (result.error) {
-          console.error('analyse failed for', file.name, '—', result.error);
-          continue;
-        }
-        if (!result.filename) result.filename = file.name;
 
-        const page = this.#resultToPage(result, img, objectUrl);
+        // Skeleton page — no spans/boxes/ocrLines until the user presses Run.
+        const page: Page = {
+          filename: file.name,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          img,
+          objectUrl,
+          sourceText: '',
+          spans: [],
+          boxes: [],
+          ocrLines: [],
+          file,
+        };
         this.pages = [...this.pages, page];
 
-        // Union-in this page's categories.
-        for (const b of page.boxes) {
-          if (!b.custom) this.activeCats.add(b.label);
-        }
-
-        // Show the first newly-analysed page as soon as it's ready.
-        // (In append mode this jumps from the previous page to the new one.)
         if (this.pages.length === firstNewIdx + 1) {
           if (Object.keys(this.catMeta).length === 0) {
             this.catMeta = await catMetaPromise;
@@ -271,7 +342,7 @@ export class EditorState {
       } catch (e) {
         if (myId !== this.#uploadId) return;
         const msg = e instanceof Error ? e.message : String(e);
-        console.error('analyse failed for', file.name, '—', msg);
+        console.error('load failed for', file.name, '—', msg);
       }
     }
 
@@ -279,10 +350,10 @@ export class EditorState {
     this.loadingProgress = null;
     this.loading = false;
     this.loadingMessage = '';
-    if (this.pages.length === 0) this.error = 'no pages could be analysed';
+    if (this.pages.length === 0) this.error = 'no usable images';
   }
 
-  #resultToPage(r: AnonymizeResult, img: HTMLImageElement, objectUrl: string): Page {
+  #resultToPage(r: AnonymizeResult, img: HTMLImageElement, objectUrl: string, file: File): Page {
     return {
       filename: r.filename,
       width: r.width,
@@ -298,7 +369,74 @@ export class EditorState {
         custom: false,
       })),
       ocrLines: r.ocr_lines ?? [],
+      file,
     };
+  }
+
+  /**
+   * Re-run the pipeline on every uploaded page with the current pipelineConfig.
+   * Custom user-drawn boxes are preserved; PII-derived boxes are replaced with
+   * the fresh result. Triggered by the navbar Run button after settings change.
+   */
+  async run(): Promise<void> {
+    if (this.pages.length === 0 || this.loading) return;
+    const myId = ++this.#uploadId;
+    this.loading = true;
+    this.loadingMessage = 'Re-running pipeline…';
+    this.loadingProgress = { done: 0, total: this.pages.length };
+    this.error = null;
+
+    const refreshed: Page[] = [];
+    for (let i = 0; i < this.pages.length; i++) {
+      if (myId !== this.#uploadId) return;
+      const existing = this.pages[i];
+      const customBoxes = existing.boxes.filter((b) => b.custom);
+      this.loadingProgress = { done: i, total: this.pages.length };
+      this.loadingMessage = `Re-running ${i + 1}/${this.pages.length}: ${existing.filename}`;
+
+      try {
+        const result = await engine.analyze(existing.file, { config: this.pipelineConfig });
+        if (myId !== this.#uploadId) return;
+        if (result.error) {
+          console.error('re-run failed for', existing.filename, '—', result.error);
+          refreshed.push(existing);
+          continue;
+        }
+        const updated = this.#resultToPage(result, existing.img, existing.objectUrl, existing.file);
+        updated.boxes = [...updated.boxes, ...customBoxes];
+        refreshed.push(updated);
+      } catch (e) {
+        if (myId !== this.#uploadId) return;
+        console.error('re-run failed for', existing.filename, '—', e);
+        refreshed.push(existing);
+      }
+    }
+
+    if (myId !== this.#uploadId) return;
+    this.pages = refreshed;
+    this.activeCats.clear();
+    for (const page of refreshed) {
+      for (const b of page.boxes) if (!b.custom) this.activeCats.add(b.label);
+    }
+    this.#loadActivePage();
+    this.loading = false;
+    this.loadingProgress = null;
+    this.loadingMessage = '';
+  }
+
+  /** Persist the current pipelineConfig to localStorage. Call after edits. */
+  persistPipelineConfig(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(PIPELINE_CONFIG_KEY, JSON.stringify(this.pipelineConfig));
+    } catch {
+      // quota exceeded / private mode — ignore, persistence is best-effort
+    }
+  }
+
+  resetPipelineConfig(): void {
+    this.pipelineConfig = structuredClone(DEFAULT_PIPELINE_CONFIG);
+    this.persistPipelineConfig();
   }
 
   // ── pagination ────────────────────────────────────────────────────
@@ -342,6 +480,7 @@ export class EditorState {
     this.#saveActivePage();
     this.activeIdx = idx;
     this.#loadActivePage();
+    this.#refreshUndoFlags();
   }
 
   prev() {
@@ -357,7 +496,6 @@ export class EditorState {
 
     this.pages = [];
     this.activeIdx = 0;
-    this.view = 'landing';
     this.error = null;
     this.loadingMessage = '';
     this.loadingProgress = null;
@@ -389,6 +527,7 @@ export class EditorState {
 
   removeSelected() {
     if (this.selected === null) return;
+    this.#snapshotForUndo();
     this.boxes = this.boxes.filter((b) => b.id !== this.selected);
     this.selected = null;
   }
@@ -421,6 +560,7 @@ export class EditorState {
   }
 
   addCustomBox(x: number, y: number, w: number, h: number) {
+    this.#snapshotForUndo();
     const label = this.drawLabel || 'custom';
     const nb: EditorBox = {
       id: this.#nextId++,
@@ -447,7 +587,8 @@ export class EditorState {
   /** Manually override the captured text on a box (used by the inline editor). */
   setBoxText(id: number, text: string) {
     const b = this.boxes.find((b) => b.id === id);
-    if (!b) return;
+    if (!b || b.text === text) return;
+    this.#snapshotForUndo();
     b.text = text;
   }
 
@@ -455,14 +596,33 @@ export class EditorState {
    *  doesn't flip based on the category filter. */
   setBoxLabel(id: number, label: string) {
     const b = this.boxes.find((b) => b.id === id);
-    if (!b) return;
+    if (!b || b.label === label) return;
+    this.#snapshotForUndo();
     b.label = label;
     if (label !== 'custom') this.activeCats.add(label);
   }
 
+  /** Toggle a box's enabled flag (the "include/exclude" checkbox). */
+  setBoxEnabled(id: number, enabled: boolean) {
+    const b = this.boxes.find((b) => b.id === id);
+    if (!b || b.enabled === enabled) return;
+    this.#snapshotForUndo();
+    b.enabled = enabled;
+  }
+
   removeBox(id: number) {
+    if (!this.boxes.some((b) => b.id === id)) return;
+    this.#snapshotForUndo();
     this.boxes = this.boxes.filter((b) => b.id !== id);
     if (this.selected === id) this.selected = null;
+  }
+
+  /**
+   * Mark the start of an interactive move so a drag captures a single undo
+   * entry (called once on mousedown), instead of one per cursor frame.
+   */
+  beginMove(): void {
+    this.#snapshotForUndo();
   }
 
   moveBox(id: number, x: number, y: number) {

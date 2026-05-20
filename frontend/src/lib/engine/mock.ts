@@ -4,10 +4,17 @@
  * sidebar, draw/select modes and persistence flows can be exercised end-to-
  * end on any machine.
  *
+ * Honours PipelineConfig:
+ *   - gliner.threshold       filters MOCK_HITS by per-hit fake confidence
+ *   - gliner.enabledLabels   filters MOCK_HITS by category
+ *   - ocr.*                  stored on config but doesn't change mock output
+ *
  * Enable with `VITE_ENGINE=mock` (see scripts in package.json).
  */
-import type { AnonymizeResult, Box, CatMeta, OcrLine, PiiSpan } from '../types';
-import type { AnonymizerEngine, EngineProgress } from './types';
+
+import type { AnonymizeResult, Box, CatMeta, OcrLine, PiiSpan, PipelineConfig } from '../types';
+import { DEFAULT_PIPELINE_CONFIG } from '../types';
+import type { AnalyzeOptions, AnonymizerEngine } from './types';
 
 const MOCK_LATENCY_MS = 600;
 const FAKE_TEXT = [
@@ -35,7 +42,8 @@ const MOCK_CATEGORIES_META: Record<string, CatMeta> = {
 type MockHit = {
   label: keyof typeof MOCK_CATEGORIES_META;
   text: string;
-  yFraction: number; // 0..1 (top-down position of this fake redaction)
+  confidence: number;
+  yFraction: number;
   xFraction: number;
   widthFraction: number;
   heightFraction: number;
@@ -45,6 +53,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'person',
     text: 'Sven Andersson',
+    confidence: 0.97,
     yFraction: 0.1,
     xFraction: 0.08,
     widthFraction: 0.25,
@@ -53,6 +62,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'email',
     text: 'sven.andersson@exempel.se',
+    confidence: 0.95,
     yFraction: 0.16,
     xFraction: 0.08,
     widthFraction: 0.32,
@@ -61,6 +71,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'phone_number',
     text: '070-123 45 67',
+    confidence: 0.88,
     yFraction: 0.22,
     xFraction: 0.08,
     widthFraction: 0.2,
@@ -69,6 +80,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'address',
     text: 'Sveavägen 12, 113 57 Stockholm',
+    confidence: 0.78,
     yFraction: 0.28,
     xFraction: 0.08,
     widthFraction: 0.38,
@@ -77,6 +89,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'personnummer',
     text: '19850315-2389',
+    confidence: 0.68,
     yFraction: 0.34,
     xFraction: 0.21,
     widthFraction: 0.18,
@@ -85,6 +98,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'organisationsnummer',
     text: '556677-1234',
+    confidence: 0.58,
     yFraction: 0.4,
     xFraction: 0.15,
     widthFraction: 0.15,
@@ -93,6 +107,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'bank_account',
     text: '5050-1055',
+    confidence: 0.48,
     yFraction: 0.46,
     xFraction: 0.15,
     widthFraction: 0.12,
@@ -101,6 +116,7 @@ const MOCK_HITS: MockHit[] = [
   {
     label: 'url',
     text: 'https://ranymizer.dev',
+    confidence: 0.38,
     yFraction: 0.52,
     xFraction: 0.08,
     widthFraction: 0.22,
@@ -121,8 +137,17 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
   }
 }
 
-function buildMockBoxes(width: number, height: number): Box[] {
-  return MOCK_HITS.map((hit) => ({
+function filterHits(config: PipelineConfig): MockHit[] {
+  const threshold = config.gliner.threshold;
+  const allowed =
+    config.gliner.enabledLabels.length === 0 ? null : new Set(config.gliner.enabledLabels);
+  return MOCK_HITS.filter(
+    (hit) => hit.confidence >= threshold && (allowed === null || allowed.has(hit.label)),
+  );
+}
+
+function buildMockBoxes(hits: MockHit[], width: number, height: number): Box[] {
+  return hits.map((hit) => ({
     label: hit.label,
     text: hit.text,
     x: Math.round(width * hit.xFraction),
@@ -132,10 +157,10 @@ function buildMockBoxes(width: number, height: number): Box[] {
   }));
 }
 
-function buildMockSpans(): PiiSpan[] {
+function buildMockSpans(hits: MockHit[]): PiiSpan[] {
   const spans: PiiSpan[] = [];
   let cursor = 0;
-  for (const hit of MOCK_HITS) {
+  for (const hit of hits) {
     const start = FAKE_TEXT.indexOf(hit.text, cursor);
     if (start < 0) continue;
     const end = start + hit.text.length;
@@ -144,7 +169,7 @@ function buildMockSpans(): PiiSpan[] {
       text: hit.text,
       start,
       end,
-      confidence: 0.99,
+      confidence: hit.confidence,
     });
     cursor = end;
   }
@@ -170,20 +195,22 @@ export function createMockEngine(): AnonymizerEngine {
     async meta(): Promise<Record<string, CatMeta>> {
       return MOCK_CATEGORIES_META;
     },
-    async analyze(file: File, onProgress?: (p: EngineProgress) => void): Promise<AnonymizeResult> {
-      onProgress?.({ phase: 'analyzing' });
+    async analyze(file: File, opts?: AnalyzeOptions): Promise<AnonymizeResult> {
+      opts?.onProgress?.({ phase: 'analyzing' });
+      const config = opts?.config ?? DEFAULT_PIPELINE_CONFIG;
       const [{ width, height }] = await Promise.all([
         readImageDimensions(file),
         delay(MOCK_LATENCY_MS),
       ]);
-      onProgress?.({ phase: 'ready' });
+      const hits = filterHits(config);
+      opts?.onProgress?.({ phase: 'ready' });
       return {
         filename: file.name,
         width,
         height,
-        boxes: buildMockBoxes(width, height),
+        boxes: buildMockBoxes(hits, width, height),
         text: FAKE_TEXT,
-        spans: buildMockSpans(),
+        spans: buildMockSpans(hits),
         ocr_lines: buildMockOcrLines(width, height),
       };
     },
