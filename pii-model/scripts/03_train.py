@@ -30,7 +30,9 @@ def main() -> None:
         default="fastino/gliner2-base-v1",
         help="HF base checkpoint to start from.",
     )
-    parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data")
+    parser.add_argument(
+        "--data-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data"
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -112,7 +114,9 @@ def main() -> None:
         print(f"  Best val loss: {results['best_metric']:.4f}")
     print(f"  Total steps:   {results.get('total_steps')}")
     print(f"  Wall time:     {results.get('total_time_seconds', 0) / 60:.1f} min")
-    print(f"\nArtefact: {output_dir}/final/  ({'adapter only' if args.mode == 'lora' else 'full model'})")
+    print(
+        f"\nArtefact: {output_dir}/final/  ({'adapter only' if args.mode == 'lora' else 'full model'})"
+    )
     print("Next step: scripts/04_evaluate.py (TBD)")
 
 

@@ -94,7 +94,9 @@ def main() -> None:
         df = df[df["entities_validated"] == True].reset_index(drop=True)  # noqa: E712
         print(f"  Kept {len(df)} / {before} rows after entity validation.")
 
-    examples = [ex for ex in (_row_to_example(r) for _, r in df.iterrows()) if ex is not None]
+    examples = [
+        ex for ex in (_row_to_example(r) for _, r in df.iterrows()) if ex is not None
+    ]
     print(f"  Converted to {len(examples)} gliner2 InputExamples.")
 
     dataset = TrainingDataset(examples)

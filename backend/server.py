@@ -19,6 +19,7 @@ Routes:
   GET  /examples/{name}           → full image or ?thumb=1 preview
   POST /anonymize_screenshot      → queued compute (Gradio JS client)
 """
+
 from __future__ import annotations
 
 import functools
@@ -40,7 +41,7 @@ from app import (
     run_pii_analysis,
 )
 
-HERE = Path(__file__).resolve().parent          # backend/
+HERE = Path(__file__).resolve().parent  # backend/
 PROJECT_ROOT = HERE.parent
 EXAMPLES_DIR = PROJECT_ROOT / "example-images"
 BUILD_DIR = PROJECT_ROOT / "frontend" / "build"
@@ -51,8 +52,7 @@ def _list_examples() -> list[str]:
     if not EXAMPLES_DIR.is_dir():
         return []
     return sorted(
-        p.name for p in EXAMPLES_DIR.iterdir()
-        if p.is_file() and p.suffix.lower() in EXAMPLE_EXTS
+        p.name for p in EXAMPLES_DIR.iterdir() if p.is_file() and p.suffix.lower() in EXAMPLE_EXTS
     )
 
 
@@ -77,8 +77,10 @@ server = gr.Server()
 server.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -115,8 +117,7 @@ async def api_meta():
     return JSONResponse(
         {
             "categories_meta": {
-                k: {"color": v["color"], "label": v["label"]}
-                for k, v in CATEGORIES_META.items()
+                k: {"color": v["color"], "label": v["label"]} for k, v in CATEGORIES_META.items()
             }
         },
         headers={"Cache-Control": "public, max-age=3600"},
@@ -156,12 +157,12 @@ def anonymize_screenshot_api(image: FileData) -> dict:
         ]
 
         return {
-            "filename":  Path(path).name,
-            "width":     img.width,
-            "height":    img.height,
-            "boxes":     boxes,
-            "text":      ocr["text"],
-            "spans":     spans,
+            "filename": Path(path).name,
+            "width": img.width,
+            "height": img.height,
+            "boxes": boxes,
+            "text": ocr["text"],
+            "spans": spans,
             "ocr_lines": ocr_lines,
         }
     except Exception as e:  # noqa: BLE001
@@ -188,6 +189,7 @@ if BUILD_DIR.is_dir():
             return FileResponse(p)
         return Response(status_code=404)
 else:
+
     @server.get("/", response_class=HTMLResponse)
     async def root_dev():
         return (

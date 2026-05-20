@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import random
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -70,30 +69,94 @@ LABEL_DESCRIPTIONS = {
 # into NDD CustomColumn plugins.
 
 _SWEDISH_FIRST_NAMES = [
-    "Anna", "Erik", "Maria", "Lars", "Karin", "Anders", "Eva", "Johan",
-    "Sara", "Mikael", "Linda", "Per", "Helena", "Magnus", "Emma", "Daniel",
-    "Sofia", "Andreas", "Lena", "Mattias", "Ingrid", "Stefan", "Margareta",
-    "Niklas", "Astrid", "Oskar", "Greta", "Henrik",
+    "Anna",
+    "Erik",
+    "Maria",
+    "Lars",
+    "Karin",
+    "Anders",
+    "Eva",
+    "Johan",
+    "Sara",
+    "Mikael",
+    "Linda",
+    "Per",
+    "Helena",
+    "Magnus",
+    "Emma",
+    "Daniel",
+    "Sofia",
+    "Andreas",
+    "Lena",
+    "Mattias",
+    "Ingrid",
+    "Stefan",
+    "Margareta",
+    "Niklas",
+    "Astrid",
+    "Oskar",
+    "Greta",
+    "Henrik",
 ]
 
 _SWEDISH_SURNAMES = [
-    "Andersson", "Johansson", "Karlsson", "Nilsson", "Eriksson", "Larsson",
-    "Olsson", "Persson", "Svensson", "Gustafsson", "Pettersson", "Jonsson",
-    "Jansson", "Lindberg", "Lindgren", "Lindström", "Lindqvist", "Bergström",
-    "Berglund", "Sandberg", "Forsberg", "Sjöberg", "Wallin", "Ek", "Ek borg",
+    "Andersson",
+    "Johansson",
+    "Karlsson",
+    "Nilsson",
+    "Eriksson",
+    "Larsson",
+    "Olsson",
+    "Persson",
+    "Svensson",
+    "Gustafsson",
+    "Pettersson",
+    "Jonsson",
+    "Jansson",
+    "Lindberg",
+    "Lindgren",
+    "Lindström",
+    "Lindqvist",
+    "Bergström",
+    "Berglund",
+    "Sandberg",
+    "Forsberg",
+    "Sjöberg",
+    "Wallin",
+    "Ek",
+    "Ek borg",
 ]
 
 _SWEDISH_STREETS = [
-    "Storgatan", "Kungsgatan", "Drottninggatan", "Sveavägen", "Vasagatan",
-    "Östermalmstorg", "Götgatan", "Hornsgatan", "Birger Jarlsgatan",
-    "Strandvägen", "Folkungagatan", "Tegnérgatan", "Karlavägen", "Valhallavägen",
+    "Storgatan",
+    "Kungsgatan",
+    "Drottninggatan",
+    "Sveavägen",
+    "Vasagatan",
+    "Östermalmstorg",
+    "Götgatan",
+    "Hornsgatan",
+    "Birger Jarlsgatan",
+    "Strandvägen",
+    "Folkungagatan",
+    "Tegnérgatan",
+    "Karlavägen",
+    "Valhallavägen",
 ]
 
 _SWEDISH_CITIES = [
-    ("Stockholm", "111 22"), ("Göteborg", "411 03"), ("Malmö", "211 18"),
-    ("Uppsala", "753 21"), ("Linköping", "582 19"), ("Västerås", "722 12"),
-    ("Örebro", "702 11"), ("Norrköping", "602 21"), ("Helsingborg", "252 25"),
-    ("Lund", "222 22"), ("Umeå", "903 26"), ("Gävle", "802 67"),
+    ("Stockholm", "111 22"),
+    ("Göteborg", "411 03"),
+    ("Malmö", "211 18"),
+    ("Uppsala", "753 21"),
+    ("Linköping", "582 19"),
+    ("Västerås", "722 12"),
+    ("Örebro", "702 11"),
+    ("Norrköping", "602 21"),
+    ("Helsingborg", "252 25"),
+    ("Lund", "222 22"),
+    ("Umeå", "903 26"),
+    ("Gävle", "802 67"),
 ]
 
 _DOMAINS = ["gmail.com", "outlook.com", "hotmail.com", "telia.com", "icloud.com"]
@@ -297,12 +360,8 @@ def build_config(model_alias: str = "openai-text") -> dd.DataDesignerConfigBuild
         dd.ExpressionColumnConfig(
             name="seed_person",
             expr=(
-                "{{ ['"
-                + "', '".join(_SWEDISH_FIRST_NAMES)
-                + "'] | random }} "
-                "{{ ['"
-                + "', '".join(_SWEDISH_SURNAMES)
-                + "'] | random }}"
+                "{{ ['" + "', '".join(_SWEDISH_FIRST_NAMES) + "'] | random }} "
+                "{{ ['" + "', '".join(_SWEDISH_SURNAMES) + "'] | random }}"
             ),
         )
     )
@@ -312,9 +371,7 @@ def build_config(model_alias: str = "openai-text") -> dd.DataDesignerConfigBuild
             name="seed_email",
             expr=(
                 "{{ seed_person.lower().replace(' ', '.').replace('å','a').replace('ä','a').replace('ö','o') }}"
-                "@{{ ['"
-                + "', '".join(_DOMAINS)
-                + "'] | random }}"
+                "@{{ ['" + "', '".join(_DOMAINS) + "'] | random }}"
             ),
         )
     )
@@ -398,7 +455,9 @@ def build_config(model_alias: str = "openai-text") -> dd.DataDesignerConfigBuild
     )
 
     # Split the structured output into flat columns for easier downstream use.
-    config.add_column(dd.ExpressionColumnConfig(name="text", expr="{{ generation.text }}"))
+    config.add_column(
+        dd.ExpressionColumnConfig(name="text", expr="{{ generation.text }}")
+    )
     config.add_column(
         dd.ExpressionColumnConfig(name="entities", expr="{{ generation.entities }}")
     )

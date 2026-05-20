@@ -12,6 +12,7 @@ Public surface (matches the original Ranymizer):
   - run_pii_analysis(text) -> (text, spans)
   - map_spans_to_boxes(lines, spans) -> [boxes]
 """
+
 from __future__ import annotations
 
 import os
@@ -19,12 +20,12 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
+from gliner2 import GLiNER2
 
 # Real imports up front so failures surface at startup, not on first request.
 # Loading the actual models is still lazy (see get_ocr / get_gliner below).
 from paddleocr import PaddleOCR
-from gliner2 import GLiNER2
+from PIL import Image
 
 try:
     import spaces  # ZeroGPU; no-op locally
@@ -49,11 +50,15 @@ OCR_LANG = os.getenv("OCR_LANG", "sv")
 # Optional preprocessing. Each costs a bit of latency but improves recall on
 # scanned / rotated / skewed pages — turn on when redacting real-world docs.
 USE_DOC_ORIENTATION_CLASSIFY = os.getenv("USE_DOC_ORIENTATION_CLASSIFY", "0").lower() in {
-    "1", "true", "yes",
+    "1",
+    "true",
+    "yes",
 }
 USE_DOC_UNWARPING = os.getenv("USE_DOC_UNWARPING", "0").lower() in {"1", "true", "yes"}
 USE_TEXTLINE_ORIENTATION = os.getenv("USE_TEXTLINE_ORIENTATION", "0").lower() in {
-    "1", "true", "yes",
+    "1",
+    "true",
+    "yes",
 }
 
 # GLiNER2-PII model id.
@@ -66,36 +71,36 @@ GLINER_MODEL = os.getenv("GLINER_MODEL", "fastino/gliner2-privacy-filter-PII-mul
 # the model has not seen those formats during training — this is zero-shot until
 # you LoRA-tune. Expect modest recall on personnummer/orgnr out of the box.
 PII_LABELS: dict[str, str] = {
-    "person":              "Full name of a person",
-    "email":               "Email address",
-    "phone_number":        "Phone number, including country code variants",
-    "address":             "Street address, postal address, or physical location",
-    "date_of_birth":       "Date of birth",
-    "personnummer":        "Swedish personal identity number, format YYMMDD-XXXX or YYYYMMDD-XXXX, 10 or 12 digits with hyphen or plus separator",
+    "person": "Full name of a person",
+    "email": "Email address",
+    "phone_number": "Phone number, including country code variants",
+    "address": "Street address, postal address, or physical location",
+    "date_of_birth": "Date of birth",
+    "personnummer": "Swedish personal identity number, format YYMMDD-XXXX or YYYYMMDD-XXXX, 10 or 12 digits with hyphen or plus separator",
     "organisationsnummer": "Swedish organisation number, format NNNNNN-NNNN, 10 digits with hyphen",
-    "bank_account":        "Bank account number including Swedish bankgiro or plusgiro",
-    "iban":                "International Bank Account Number, starts with two-letter country code",
-    "card_number":         "Credit or debit card number",
-    "url":                 "URL or web link",
-    "ip_address":          "IP address",
-    "username":            "User name or login handle",
+    "bank_account": "Bank account number including Swedish bankgiro or plusgiro",
+    "iban": "International Bank Account Number, starts with two-letter country code",
+    "card_number": "Credit or debit card number",
+    "url": "URL or web link",
+    "ip_address": "IP address",
+    "username": "User name or login handle",
 }
 
 # Per-category metadata used by the frontend overlay.
 CATEGORIES_META: dict[str, dict[str, str]] = {
-    "person":              {"color": "#ef4444", "label": "Person"},
-    "email":               {"color": "#f97316", "label": "Email"},
-    "phone_number":        {"color": "#f59e0b", "label": "Phone"},
-    "address":             {"color": "#84cc16", "label": "Address"},
-    "date_of_birth":       {"color": "#22c55e", "label": "Date of birth"},
-    "personnummer":        {"color": "#06b6d4", "label": "Personnummer"},
+    "person": {"color": "#ef4444", "label": "Person"},
+    "email": {"color": "#f97316", "label": "Email"},
+    "phone_number": {"color": "#f59e0b", "label": "Phone"},
+    "address": {"color": "#84cc16", "label": "Address"},
+    "date_of_birth": {"color": "#22c55e", "label": "Date of birth"},
+    "personnummer": {"color": "#06b6d4", "label": "Personnummer"},
     "organisationsnummer": {"color": "#0ea5e9", "label": "Organisationsnr"},
-    "bank_account":        {"color": "#6366f1", "label": "Bank account"},
-    "iban":                {"color": "#8b5cf6", "label": "IBAN"},
-    "card_number":         {"color": "#a855f7", "label": "Card"},
-    "url":                 {"color": "#ec4899", "label": "URL"},
-    "ip_address":          {"color": "#f43f5e", "label": "IP"},
-    "username":            {"color": "#64748b", "label": "Username"},
+    "bank_account": {"color": "#6366f1", "label": "Bank account"},
+    "iban": {"color": "#8b5cf6", "label": "IBAN"},
+    "card_number": {"color": "#a855f7", "label": "Card"},
+    "url": {"color": "#ec4899", "label": "URL"},
+    "ip_address": {"color": "#f43f5e", "label": "IP"},
+    "username": {"color": "#64748b", "label": "Username"},
 }
 
 
@@ -206,7 +211,9 @@ def ocr_image(img: Image.Image) -> dict[str, Any]:
         raw_polys += len(rec_polys)
         raw_texts += sum(1 for t in rec_texts if str(t or "").strip())
 
-        for txt, poly in zip(rec_texts, rec_polys):
+        # strict=False: PaddleOCR can occasionally return mismatched arrays
+        # (rec_texts vs rec_polys) when post-processing drops entries.
+        for txt, poly in zip(rec_texts, rec_polys, strict=False):
             txt = str(txt) if txt is not None else ""
             if not txt.strip():
                 continue
@@ -220,12 +227,17 @@ def ocr_image(img: Image.Image) -> dict[str, Any]:
             x1, y1 = max(xs), max(ys)
             start = offset
             end = offset + len(txt)
-            lines.append({
-                "text": txt,
-                "start": start, "end": end,
-                "x": x0, "y": y0,
-                "w": x1 - x0, "h": y1 - y0,
-            })
+            lines.append(
+                {
+                    "text": txt,
+                    "start": start,
+                    "end": end,
+                    "x": x0,
+                    "y": y0,
+                    "w": x1 - x0,
+                    "h": y1 - y0,
+                }
+            )
             text_parts.append(txt)
             offset = end + 1  # account for the '\n' separator
 
@@ -273,13 +285,15 @@ def run_pii_analysis(
         for ent in entities or []:
             if not isinstance(ent, dict):
                 continue
-            spans.append({
-                "label":      label,
-                "text":       ent.get("text", ""),
-                "start":      int(ent["start"]),
-                "end":        int(ent["end"]),
-                "confidence": float(ent.get("confidence", 1.0)),
-            })
+            spans.append(
+                {
+                    "label": label,
+                    "text": ent.get("text", ""),
+                    "start": int(ent["start"]),
+                    "end": int(ent["end"]),
+                    "confidence": float(ent.get("confidence", 1.0)),
+                }
+            )
 
     spans.sort(key=lambda s: (s["start"], s["end"]))
     return text, spans
@@ -316,24 +330,30 @@ def map_spans_to_boxes(
             local_e = min(line_len, e - ln["start"])
             x0 = ln["x"] + int(ln["w"] * local_s / line_len)
             x1 = ln["x"] + int(ln["w"] * local_e / line_len)
-            boxes.append({
-                "label": sp["label"],
-                "text":  sp.get("text", ""),
-                "x":     max(0, x0 - PAD),
-                "y":     ln["y"],
-                "w":     max(1, (x1 - x0) + 2 * PAD),
-                "h":     ln["h"],
-            })
+            boxes.append(
+                {
+                    "label": sp["label"],
+                    "text": sp.get("text", ""),
+                    "x": max(0, x0 - PAD),
+                    "y": ln["y"],
+                    "w": max(1, (x1 - x0) + 2 * PAD),
+                    "h": ln["h"],
+                }
+            )
         else:
             x0 = min(ln["x"] for ln in overlap)
             y0 = min(ln["y"] for ln in overlap)
             x1 = max(ln["x"] + ln["w"] for ln in overlap)
             y1 = max(ln["y"] + ln["h"] for ln in overlap)
-            boxes.append({
-                "label": sp["label"],
-                "text":  sp.get("text", ""),
-                "x": x0, "y": y0,
-                "w": x1 - x0, "h": y1 - y0,
-            })
+            boxes.append(
+                {
+                    "label": sp["label"],
+                    "text": sp.get("text", ""),
+                    "x": x0,
+                    "y": y0,
+                    "w": x1 - x0,
+                    "h": y1 - y0,
+                }
+            )
 
     return boxes
