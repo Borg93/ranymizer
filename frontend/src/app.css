@@ -12,6 +12,13 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* Tailwind 4 + Vite auto-discovery isn't picking up .svelte files under
+ * Bun in this project. Point it at the source roots explicitly. Paths
+ * are relative to THIS file (frontend/src/app.css), so "./lib" = src/lib. */
+@source "./lib";
+@source "./routes";
+@source "./app.html";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ── design tokens (dark by default, matches original) ────────────── */

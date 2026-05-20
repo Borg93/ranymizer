@@ -140,6 +140,9 @@ bun add -D tw-animate-css
 
 Replace `src/app.css` with the contents of `SKILL_DIR/assets/app.css` — it sets up Tailwind 4 and the shadcn-svelte design tokens (light + dark) using `@theme inline`.
 
+> ⚠ **Don't strip the `@source` directives from the template.**
+> On Bun + Vite ≥8 + `@sveltejs/vite-plugin-svelte` ≥7, the plugin's auto content discovery does **not** pick up `.svelte` files (they're transformed to JS before Tailwind extracts classes). Symptom: served `app.css` is ~11 KB with zero `.flex`/`.h-screen`/`.bg-*` rules and the page renders as unstyled black-and-white HTML. The fix is explicit `@source` paths relative to `app.css` (so from `src/app.css` use `./lib`, `./routes`, `./app.html` — **not** `../lib`, which resolves to `frontend/lib` and silently matches nothing).
+
 Import the CSS in `src/routes/+layout.svelte`:
 
 ```svelte

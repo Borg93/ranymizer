@@ -1,6 +1,22 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* Explicit @source paths — defensive default.
+ *
+ * @tailwindcss/vite v4 is supposed to auto-discover content from the Vite
+ * module graph, but with Bun + Vite ≥8 + @sveltejs/vite-plugin-svelte ≥7
+ * the .svelte files are transformed to JS before Tailwind sees them and
+ * extraction silently yields zero utilities → unstyled black-and-white DOM.
+ *
+ * Paths are relative to THIS CSS file. With app.css at src/app.css:
+ *   ./lib       → src/lib
+ *   ./routes    → src/routes
+ *   ./app.html  → src/app.html
+ * Tailwind applies its built-in extension filter (.svelte/.ts/.js/.html). */
+@source "./lib";
+@source "./routes";
+@source "./app.html";
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
