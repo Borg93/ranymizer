@@ -304,16 +304,12 @@ const categoryRows = $derived(
     </div>
   </CollapsibleSection>
 
-  <!-- Export -->
-  <section class="px-4 py-3.5">
-    <div class="mb-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
-      Export
-    </div>
+  <CollapsibleSection title="Export" expanded={false} bordered={false}>
     <div class="flex flex-col gap-1">
       <Button variant="outline" class="justify-between" onclick={onDownload}>
         <span class="flex items-center gap-2">
           <Download class="h-3.5 w-3.5" />
-          Download PNG
+          {editor.pageCount > 1 ? `Download ZIP (${editor.pageCount} pages)` : 'Download PNG'}
         </span>
         <kbd class="rounded-sm border border-border bg-card px-1 py-px font-mono text-[10.5px] text-muted-foreground">⌘S</kbd>
       </Button>
@@ -332,7 +328,7 @@ const categoryRows = $derived(
         Export sanitized text only →
       </button>
     </div>
-  </section>
+  </CollapsibleSection>
 
 </aside>
 

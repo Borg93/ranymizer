@@ -9,6 +9,35 @@ $effect(() => {
   const el = stripEl.querySelector<HTMLElement>(`[data-idx="${editor.activeIdx}"]`);
   el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
 });
+
+/**
+ * Paint a thumbnail with redaction masks burned in. Re-runs whenever the
+ * active page's working copy, the active idx (so we switch sources), or
+ * the mask colour change. Other pages re-render whenever their snapshot
+ * box count moves.
+ */
+function paintThumbnail(canvas: HTMLCanvasElement, pageIdx: number) {
+  $effect(() => {
+    // Track the reactive dependencies we care about.
+    void editor.activeIdx;
+    void editor.maskColor;
+    if (pageIdx === editor.activeIdx) {
+      void editor.boxes;
+    } else {
+      void editor.pages[pageIdx]?.boxes;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rendered = editor.renderThumbnailCanvas(pageIdx, 240);
+    if (!rendered) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    canvas.width = rendered.width;
+    canvas.height = rendered.height;
+    ctx.drawImage(rendered, 0, 0);
+  });
+}
 </script>
 
 <div
@@ -28,7 +57,11 @@ $effect(() => {
         onclick={() => editor.goTo(i)}
         title={p.filename}
       >
-        <img src={p.objectUrl} alt={p.filename} class="h-full w-full object-cover" />
+        <canvas
+          class="block h-full w-full object-cover"
+          {@attach (node: HTMLCanvasElement) => paintThumbnail(node, i)}
+          aria-label={p.filename}
+        ></canvas>
         <span
           class="absolute bottom-0 left-0 right-0 truncate bg-background/80 px-1 py-px text-center font-mono text-[9.5px] text-muted-foreground"
         >

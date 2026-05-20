@@ -11,6 +11,7 @@ import {
   Undo2,
   Redo2,
 } from 'lucide-svelte';
+import { zipSync } from 'fflate';
 import { toast } from 'svelte-sonner';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -60,18 +61,44 @@ function toggleTheme() {
   theme = theme === 'dark' ? 'light' : 'dark';
 }
 
-function downloadImage() {
-  const c = editor.renderExportCanvas();
-  c.toBlob((blob) => {
-    if (!blob) return;
-    const base = (editor.filename || 'image').replace(/\.[^/.]+$/, '');
-    const a = document.createElement('a');
-    a.download = `${base}-redacted.png`;
-    a.href = URL.createObjectURL(blob);
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast.success(`saved ${a.download}`);
-  }, 'image/png');
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.download = filename;
+  a.href = url;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast.success(`saved ${filename}`);
+}
+
+async function downloadImage(): Promise<void> {
+  // Single page → PNG. Multi page → bundle every page into a ZIP.
+  if (editor.pageCount <= 1) {
+    const canvas = editor.renderExportCanvas();
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const base = (editor.filename || 'image').replace(/\.[^/.]+$/, '');
+      triggerDownload(blob, `${base}-redacted.png`);
+    }, 'image/png');
+    return;
+  }
+
+  // Multi page — render each PNG, pack into a ZIP via fflate.
+  const entries: Record<string, Uint8Array> = {};
+  for (let i = 0; i < editor.pageCount; i++) {
+    const blob = await editor.pageToPngBlob(i);
+    if (!blob) continue;
+    const stem = (editor.pages[i].filename || `page-${i + 1}`).replace(/\.[^/.]+$/, '');
+    const safeStem = stem.replace(/[/\\:*?"<>|]+/g, '_');
+    const filename = `${String(i + 1).padStart(2, '0')}_${safeStem}-redacted.png`;
+    entries[filename] = new Uint8Array(await blob.arrayBuffer());
+  }
+  const zipped = zipSync(entries);
+  // Wrap in a fresh Uint8Array so the underlying buffer is an ArrayBuffer
+  // (zipSync may share a subarray of a SharedArrayBuffer-free pool).
+  const zipBlob = new Blob([new Uint8Array(zipped)], { type: 'application/zip' });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  triggerDownload(zipBlob, `ranymizer-redacted-${stamp}.zip`);
 }
 
 async function copyToClipboard() {

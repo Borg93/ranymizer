@@ -800,19 +800,83 @@ export class EditorState {
   }
 
   // ── export ────────────────────────────────────────────────────────
+  /** Render the active page (working copy) — used by the canvas overlay path. */
   renderExportCanvas(): HTMLCanvasElement {
+    return this.#renderPageCanvas(this.img, this.width, this.height, this.boxes);
+  }
+
+  /**
+   * Render any page by index. Reads from the live working copy when the
+   * index matches activeIdx, so in-flight edits show up in the export.
+   */
+  renderPageCanvas(pageIdx: number): HTMLCanvasElement | null {
+    const page = this.pages[pageIdx];
+    if (!page) return null;
+    if (pageIdx === this.activeIdx) {
+      return this.#renderPageCanvas(this.img, this.width, this.height, this.boxes);
+    }
+    return this.#renderPageCanvas(page.img, page.width, page.height, page.boxes);
+  }
+
+  /** Small thumbnail render of a page with masks burned in (preview style). */
+  renderThumbnailCanvas(pageIdx: number, maxSize = 240): HTMLCanvasElement | null {
+    const page = this.pages[pageIdx];
+    if (!page) return null;
+    const source =
+      pageIdx === this.activeIdx
+        ? { img: this.img, w: this.width, h: this.height, boxes: this.boxes }
+        : { img: page.img, w: page.width, h: page.height, boxes: page.boxes };
+    if (!source.img) return null;
+    const scale = Math.min(1, maxSize / Math.max(source.w, source.h));
+    const tw = Math.max(1, Math.round(source.w * scale));
+    const th = Math.max(1, Math.round(source.h * scale));
     const c = document.createElement('canvas');
-    c.width = this.width;
-    c.height = this.height;
+    c.width = tw;
+    c.height = th;
     const ctx = c.getContext('2d');
     if (!ctx) return c;
-    if (this.img) ctx.drawImage(this.img, 0, 0);
+    ctx.drawImage(source.img, 0, 0, tw, th);
     ctx.fillStyle = this.maskColor;
-    for (const b of this.boxes) {
+    for (const b of source.boxes) {
+      if (!this.isVisible(b)) continue;
+      ctx.fillRect(b.x * scale, b.y * scale, b.w * scale, b.h * scale);
+    }
+    return c;
+  }
+
+  #renderPageCanvas(
+    img: HTMLImageElement | null,
+    width: number,
+    height: number,
+    boxes: EditorBox[],
+  ): HTMLCanvasElement {
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = height;
+    const ctx = c.getContext('2d');
+    if (!ctx) return c;
+    if (img) ctx.drawImage(img, 0, 0);
+    ctx.fillStyle = this.maskColor;
+    for (const b of boxes) {
       if (!this.isVisible(b)) continue;
       ctx.fillRect(b.x, b.y, b.w, b.h);
     }
     return c;
+  }
+
+  /** Filename without extension. */
+  #pageStem(pageIdx: number): string {
+    const filename = this.pages[pageIdx]?.filename ?? `page-${pageIdx + 1}`;
+    return filename.replace(/\.[^/.]+$/, '');
+  }
+
+  /** Render one page to a PNG Blob. */
+  async pageToPngBlob(pageIdx: number): Promise<Blob | null> {
+    const canvas = this.renderPageCanvas(pageIdx);
+    if (!canvas) return null;
+    return await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((blob) => resolve(blob), 'image/png'),
+    );
   }
 
   renderSanitizedText(): string {
