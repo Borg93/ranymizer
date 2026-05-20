@@ -1,0 +1,44 @@
+[project]
+name = "ranymizer"
+version = "0.1.0"
+description = "Ranymizer — Gradio backend (PaddleOCR + GLiNER2 PII pipeline) for the public showcase target."
+readme = "../README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Ranymizer" }]
+
+dependencies = [
+  # Gradio + FastAPI
+  "gradio>=4.44.0",
+  "fastapi",
+
+  # PaddleOCR 3.5 with the Transformers backend
+  "paddleocr==3.5.0",
+  "paddlex==3.5.2",
+  "transformers>=5.4.0",
+
+  # Torch — for CUDA wheels, install with:
+  #   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+  "torch>=2.4",
+  "torchvision",
+
+  # GLiNER2 PII (local extras pull torch/peft/etc.)
+  "gliner2[local]",
+
+  # Misc
+  "Pillow>=10.0",
+  "numpy>=1.26",
+]
+
+[tool.uv]
+package = false                 # this is an app, not a library
+managed = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Light defaults; tighten later.
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]               # line length handled by formatter

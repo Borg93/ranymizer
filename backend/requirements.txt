@@ -1,0 +1,23 @@
+# Gradio + FastAPI
+gradio>=4.44.0
+
+# PaddleOCR 3.5 with the Transformers backend.
+# Per https://huggingface.co/blog/PaddlePaddle/paddleocr-transformers
+paddleocr==3.5.0
+paddlex==3.5.2
+transformers>=5.4.0
+
+# Torch — pick the build matching your hardware.
+# CUDA 12.6:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+# CPU only:   pip install torch torchvision
+torch>=2.4
+torchvision
+
+# GLiNER2 (local install includes torch/peft/etc.)
+# Use [local] extra to get the inference engine, not just the schema API.
+gliner2[local]
+
+# Misc
+Pillow>=10.0
+numpy>=1.26
+fastapi

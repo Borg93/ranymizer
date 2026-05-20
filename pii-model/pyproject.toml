@@ -1,0 +1,43 @@
+[project]
+name = "ranymizer-pii-model"
+version = "0.1.0"
+description = "Train Ranymizer's Swedish PII GLiNER2 model on NeMo Data Designer synthetic data."
+requires-python = ">=3.11"
+
+# Two heavy deps:
+#   - gliner2[local] : trainer + PEFT/LoRA + torch
+#   - data-designer  : synthetic data generation
+#
+# NDD pulls a lot in (pandas, pyarrow, openai client, etc.); gliner2[local]
+# pulls torch + transformers. Together this is a ~3GB venv -- intentionally
+# kept SEPARATE from `backend/` (which only needs gliner2[local]) and
+# `frontend/` (TS).
+dependencies = [
+    "gliner2[local]>=1.3.1",
+    "data-designer>=0.5.6",
+    "pandas",
+    "pyarrow",
+    "torch",
+    "peft",
+    # ONNX export (script 05)
+    "onnx",
+    "onnxruntime",
+    "safetensors",
+]
+
+[project.optional-dependencies]
+# Use one of these to pick an NDD model provider:
+#   uv pip install -e ".[openai]"   # default
+#   uv pip install -e ".[nvidia]"   # NIM
+#   uv pip install -e ".[vllm]"     # local vLLM
+openai = []
+nvidia = []
+vllm   = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*", "configs*"]
