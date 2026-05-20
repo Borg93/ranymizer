@@ -489,15 +489,16 @@ const cursorClass = $derived.by(() => {
 </div>
 
 <style>
-  /* Checkerboard behind the canvas. */
+  /* Dotted pattern behind the canvas — a 1px dot every 16px on the
+     background colour. CSS-only so we don't pay for an SVG asset. */
   .canvas-scroll {
-    background:
-      linear-gradient(45deg, var(--surface2) 25%, transparent 25%),
-      linear-gradient(-45deg, var(--surface2) 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, var(--surface2) 75%),
-      linear-gradient(-45deg, transparent 75%, var(--surface2) 75%);
     background-color: var(--background);
+    background-image: radial-gradient(
+      circle,
+      var(--border-strong, rgba(255, 255, 255, 0.18)) 1px,
+      transparent 1px
+    );
     background-size: 16px 16px;
-    background-position: 0 0, 0 8px, 8px -8px, 8px 0;
+    background-position: 0 0;
   }
 </style>

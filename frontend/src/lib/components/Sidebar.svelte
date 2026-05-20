@@ -1,5 +1,8 @@
 <script lang="ts">
-import { MousePointer2, Square, Download, Copy, ScanText, Palette } from 'lucide-svelte';
+import { Copy, Download, HelpCircle, MousePointer2, Palette, ScanText, Square } from 'lucide-svelte';
+import ShortcutHelp from './ShortcutHelp.svelte';
+
+let helpOpen = $state(false);
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '$lib/components/ui/toggle-group';
@@ -97,15 +100,24 @@ const categoryRows = $derived(
   </div>
   <!-- Tool -->
   <section class="border-b border-border px-4 py-3.5">
-    <div class="mb-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
-      Tool
+    <div class="mb-2 flex items-center text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
+      <span class="flex-1">Tool</span>
+      <button
+        type="button"
+        class="rounded-md p-0.5 text-text3 transition-colors hover:bg-surface2 hover:text-foreground"
+        onclick={() => (helpOpen = true)}
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+      >
+        <HelpCircle class="h-3.5 w-3.5" />
+      </button>
     </div>
 
     <ToggleGroup
       type="single"
       value={editor.mode}
       onValueChange={(v) => v && editor.setMode(v as 'select' | 'draw')}
-      class="mb-3 grid w-full grid-cols-2 gap-1.5"
+      class="grid w-full grid-cols-2 gap-1.5"
     >
       <ToggleGroupItem
         value="select"
@@ -127,27 +139,39 @@ const categoryRows = $derived(
       </ToggleGroupItem>
     </ToggleGroup>
 
-    <div class="rounded-md border border-border bg-surface2 px-2.5 py-2 text-xs text-muted-foreground">
-      {#if editor.mode === 'select'}
-        <div>Click a bar to select. Drag to move. <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">Del</kbd> to remove.</div>
-        <div class="mt-1.5 flex flex-wrap gap-1.5">
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">V</kbd>
-          <span class="text-text3">·</span>
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">B</kbd>
-          <span class="text-text3">·</span>
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">Esc</kbd>
-        </div>
-      {:else}
-        <div>Drag on empty canvas to add a black bar. Release to confirm.</div>
-        <div class="mt-1.5 flex flex-wrap gap-1.5">
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">B</kbd>
-          <span class="text-text3">·</span>
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">V</kbd>
-          <span class="text-text3">·</span>
-          <kbd class="rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px]">0</kbd>
-        </div>
-      {/if}
-    </div>
+    <!-- Category picker sits inline with the tool toggle so the user
+         doesn't have to hunt for it after pressing Draw. Re-labels the
+         current selection if one exists, otherwise pre-sets the category
+         for the next drawn box. -->
+    {#if editor.selectedBox || editor.mode === 'draw'}
+      <div class="mt-2.5 flex flex-col gap-1">
+        <span class="text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
+          {editor.selectedBox ? 'Selected box category' : 'Next box category'}
+        </span>
+        {#if editor.selectedBox}
+          <select
+            class="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[12.5px] text-foreground"
+            value={editor.selectedBox.label}
+            onchange={(e) =>
+              editor.selected !== null &&
+              editor.setBoxLabel(editor.selected, (e.currentTarget as HTMLSelectElement).value)}
+          >
+            {#each categoryKeys as cat (cat)}
+              <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
+            {/each}
+          </select>
+        {:else}
+          <select
+            class="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[12.5px] text-foreground"
+            bind:value={editor.drawLabel}
+          >
+            {#each categoryKeys as cat (cat)}
+              <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
+            {/each}
+          </select>
+        {/if}
+      </div>
+    {/if}
   </section>
 
   <!-- Detected -->
@@ -248,37 +272,6 @@ const categoryRows = $derived(
     {/if}
   </section>
 
-  <!-- Box category: re-labels the selected box, or pre-sets the category
-       for the next drawn box. Hidden when neither applies. -->
-  {#if editor.selectedBox || editor.mode === 'draw'}
-    <section class="border-b border-border px-4 py-3.5">
-      <div class="mb-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
-        {editor.selectedBox ? 'Selected box category' : 'Next box category'}
-      </div>
-      {#if editor.selectedBox}
-        <select
-          class="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[12.5px] text-foreground"
-          value={editor.selectedBox.label}
-          onchange={(e) =>
-            editor.selected !== null &&
-            editor.setBoxLabel(editor.selected, (e.currentTarget as HTMLSelectElement).value)}
-        >
-          {#each categoryKeys as cat (cat)}
-            <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
-          {/each}
-        </select>
-      {:else}
-        <select
-          class="w-full rounded-md border border-border bg-card px-2 py-1.5 text-[12.5px] text-foreground"
-          bind:value={editor.drawLabel}
-        >
-          {#each categoryKeys as cat (cat)}
-            <option value={cat}>{editor.catMeta[cat]?.label ?? cat}</option>
-          {/each}
-        </select>
-      {/if}
-    </section>
-  {/if}
 
   <CollapsibleSection title="Categories" count={categoryRows.length} bind:expanded={categoriesExpanded}>
     <div class="flex flex-col gap-0.5">
@@ -331,6 +324,8 @@ const categoryRows = $derived(
   </CollapsibleSection>
 
 </aside>
+
+<ShortcutHelp bind:open={helpOpen} />
 
 <style>
   .resize-handle .grip {
