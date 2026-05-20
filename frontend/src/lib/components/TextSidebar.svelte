@@ -4,6 +4,8 @@ import {
   Check,
   CheckSquare,
   Copy,
+  Files,
+  FileText,
   ListChecks,
   Pencil,
   Search,
@@ -17,6 +19,8 @@ import { editor } from '$lib/state.svelte';
 let query = $state('');
 let editingId = $state<number | null>(null);
 let bulkMode = $state(false);
+/** Scope filter: 'all' = boxes from every page, 'page' = active page only. */
+let scope = $state<'all' | 'page'>('all');
 const activeLabelFilter = new SvelteSet<string>();
 
 function toggleBulkMode(): void {
@@ -142,6 +146,7 @@ const labelPills = $derived.by<LabelPill[]>(() => {
 const filteredRows = $derived.by<Row[]>(() => {
   const q = query.trim().toLowerCase();
   return rows.filter((r) => {
+    if (scope === 'page' && r.pageIdx !== editor.activeIdx) return false;
     if (activeLabelFilter.size > 0 && !activeLabelFilter.has(r.label)) return false;
     if (!q) return true;
     const catLabel = (editor.catMeta[r.label]?.label ?? r.label).toLowerCase();
@@ -244,9 +249,34 @@ function bulkDelete(): void {
         </span>
       {/if}
 
+      {#if editor.pageCount > 1}
+        <div class="ml-auto inline-flex overflow-hidden rounded-md border border-border">
+          <button
+            type="button"
+            class="flex items-center gap-1 px-1.5 py-0.5 text-[10.5px] transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+            data-active={scope === 'all'}
+            onclick={() => (scope = 'all')}
+            title="Show boxes from every page"
+          >
+            <Files class="h-3 w-3" />
+            <span>All</span>
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-1 border-l border-border px-1.5 py-0.5 text-[10.5px] transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+            data-active={scope === 'page'}
+            onclick={() => (scope = 'page')}
+            title="Show boxes only from the current page"
+          >
+            <FileText class="h-3 w-3" />
+            <span>Page</span>
+          </button>
+        </div>
+      {/if}
+
       <button
         type="button"
-        class="ml-auto flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10.5px] transition-colors data-[active=true]:border-primary data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+        class="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10.5px] transition-colors data-[active=true]:border-primary data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground {editor.pageCount > 1 ? '' : 'ml-auto'}"
         data-active={bulkMode}
         onclick={toggleBulkMode}
         title={bulkMode ? 'Exit bulk select' : 'Bulk select (click rows to toggle)'}
