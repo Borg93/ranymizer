@@ -91,6 +91,7 @@ const categoryKeys = $derived(['custom', ...Object.keys(editor.catMeta).sort()])
 
 type Row = {
   id: number;
+  pageIdx: number;
   label: string;
   text: string;
   confidence: number | null;
@@ -99,14 +100,17 @@ type Row = {
 
 const rows = $derived.by<Row[]>(() => {
   const out: Row[] = [];
-  for (const box of editor.boxes) {
+  for (const { pageIdx, box } of editor.allBoxes) {
     let confidence: number | null = null;
     if (!box.custom) {
-      const span = editor.spans.find((s) => s.label === box.label && s.text === box.text);
+      const span = editor
+        .spansForPage(pageIdx)
+        .find((s) => s.label === box.label && s.text === box.text);
       if (span) confidence = span.confidence;
     }
     out.push({
       id: box.id,
+      pageIdx,
       label: box.label,
       text: box.text,
       confidence,
@@ -160,6 +164,10 @@ function displayLabelFor(label: string): string {
 
 const filteredIds = $derived(filteredRows.map((r) => r.id));
 
+// Always show page badges when there's more than one page, even if some are
+// empty — gives users a clearer mental map for cross-page duplicates.
+const showPageBadge = $derived(editor.pageCount > 1);
+
 const selectedVisibleCount = $derived.by(() => {
   let n = 0;
   for (const id of filteredIds) if (editor.selectedIds.has(id)) n++;
@@ -170,17 +178,26 @@ const allVisibleSelected = $derived(
   filteredIds.length > 0 && selectedVisibleCount === filteredIds.length,
 );
 
-function onRowClick(event: MouseEvent, id: number): void {
+function onRowClick(event: MouseEvent, row: Row): void {
+  // Cross-page clicks always single-select-and-navigate (range/toggle
+  // semantics across pages get confusing — keep it scoped to one page).
+  if (row.pageIdx !== editor.activeIdx) {
+    editor.selectAndNavigate(row.pageIdx, row.id);
+    return;
+  }
   if (event.shiftKey) {
-    editor.selectRange(id, filteredIds);
+    // Range select only within the active page.
+    const samePageIds = filteredRows
+      .filter((r) => r.pageIdx === editor.activeIdx)
+      .map((r) => r.id);
+    editor.selectRange(row.id, samePageIds);
     return;
   }
-  // In bulk mode plain clicks toggle; cmd/ctrl still toggles (no-op redirect).
   if (bulkMode || event.metaKey || event.ctrlKey) {
-    editor.selectToggle(id);
+    editor.selectToggle(row.id);
     return;
   }
-  editor.selectOnly(id);
+  editor.selectOnly(row.id);
 }
 
 function toggleAllVisible(): void {
@@ -379,11 +396,19 @@ function bulkDelete(): void {
           data-selected={isSelected}
           data-primary={isPrimary}
         >
+          {#if showPageBadge}
+            <span
+              class="mt-px shrink-0 rounded-sm border border-border bg-background px-1 py-px font-mono text-[9.5px] tabular-nums text-text3"
+              title={`Page ${r.pageIdx + 1}`}
+            >
+              P{r.pageIdx + 1}
+            </span>
+          {/if}
           <button
             type="button"
             class="mt-0.5 h-3.5 w-[3px] shrink-0 rounded-[1.5px]"
             style:background={colorFor(r.label)}
-            onclick={(e) => onRowClick(e, r.id)}
+            onclick={(e) => onRowClick(e, r)}
             aria-label="Select box"
             title={displayLabelFor(r.label)}
           ></button>
@@ -419,7 +444,7 @@ function bulkDelete(): void {
               <button
                 type="button"
                 class="min-w-0 truncate text-left text-foreground hover:text-primary"
-                onclick={(e) => onRowClick(e, r.id)}
+                onclick={(e) => onRowClick(e, r)}
                 ondblclick={() => startEditing(r.id)}
                 title={r.text || '(no text)'}
               >

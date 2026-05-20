@@ -231,6 +231,26 @@ export class EditorState {
   hasMultiple = $derived(this.pages.length > 1);
   hasImage = $derived(this.pages.length > 0);
 
+  /**
+   * Every box across every page, paired with the page it lives on.
+   * The active page's boxes come from the live working copy (`this.boxes`)
+   * so in-flight edits show up immediately; other pages read their
+   * snapshot in `pages[i].boxes`.
+   */
+  allBoxes = $derived.by<Array<{ pageIdx: number; box: EditorBox }>>(() => {
+    const out: Array<{ pageIdx: number; box: EditorBox }> = [];
+    for (let i = 0; i < this.pages.length; i++) {
+      const source = i === this.activeIdx ? this.boxes : this.pages[i].boxes;
+      for (const box of source) out.push({ pageIdx: i, box });
+    }
+    return out;
+  });
+
+  spansForPage(pageIdx: number): PiiSpan[] {
+    if (pageIdx === this.activeIdx) return this.spans;
+    return this.pages[pageIdx]?.spans ?? [];
+  }
+
   // ── helpers ───────────────────────────────────────────────────────
   isVisible(b: EditorBox): boolean {
     if (!b.enabled) return false;
@@ -551,6 +571,24 @@ export class EditorState {
     this.selected = id;
   }
 
+  /**
+   * Sidebar uses this when a row's box lives on a different page —
+   * navigate there first, then make it the single selection.
+   */
+  selectAndNavigate(pageIdx: number, id: number): void {
+    if (pageIdx !== this.activeIdx) this.goTo(pageIdx);
+    this.selectOnly(id);
+  }
+
+  /** Find which page index a globally-unique box id lives on, or -1. */
+  pageOfBox(id: number): number {
+    for (let i = 0; i < this.pages.length; i++) {
+      const source = i === this.activeIdx ? this.boxes : this.pages[i].boxes;
+      if (source.some((b) => b.id === id)) return i;
+    }
+    return -1;
+  }
+
   /** Cmd/Ctrl-click — toggle membership without clearing the rest. */
   selectToggle(id: number): void {
     if (this.selectedIds.has(id)) {
@@ -598,28 +636,40 @@ export class EditorState {
     this.selected = null;
   }
 
-  /** Delete every box in `selectedIds` in one undo step. */
+  /**
+   * Delete every box in `selectedIds` across all pages in one undo step
+   * for the active page. (Edits on other pages don't go through the undo
+   * stack right now — that's a known limit; see canUndo docs.)
+   */
   removeSelectedMany(): void {
     if (this.selectedIds.size === 0) return;
     this.#snapshotForUndo();
+    this.#saveActivePage();
     const ids = this.selectedIds;
-    this.boxes = this.boxes.filter((b) => !ids.has(b.id));
+    for (let i = 0; i < this.pages.length; i++) {
+      this.pages[i].boxes = this.pages[i].boxes.filter((b) => !ids.has(b.id));
+    }
+    this.#loadActivePage();
     this.selectedIds.clear();
     this.selected = null;
   }
 
-  /** Set the same label on every box in `selectedIds` in one undo step. */
+  /** Set the same label on every box in `selectedIds` across all pages. */
   setBoxLabelMany(label: string): void {
     if (this.selectedIds.size === 0) return;
-    const ids = this.selectedIds;
-    const changedAny = this.boxes.some((b) => ids.has(b.id) && b.label !== label);
-    if (!changedAny) return;
     this.#snapshotForUndo();
-    for (const b of this.boxes) {
-      if (!ids.has(b.id)) continue;
-      b.label = label;
+    this.#saveActivePage();
+    const ids = this.selectedIds;
+    let changedAny = false;
+    for (let i = 0; i < this.pages.length; i++) {
+      for (const b of this.pages[i].boxes) {
+        if (!ids.has(b.id) || b.label === label) continue;
+        b.label = label;
+        changedAny = true;
+      }
     }
-    if (label !== 'custom') this.activeCats.add(label);
+    this.#loadActivePage();
+    if (label !== 'custom' && changedAny) this.activeCats.add(label);
   }
 
   /** Collect text from every OCR line that overlaps the given rectangle.
