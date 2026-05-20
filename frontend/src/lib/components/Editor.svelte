@@ -20,12 +20,24 @@ import SettingsDrawer from './SettingsDrawer.svelte';
 import TextSidebar from './TextSidebar.svelte';
 import Thumbnails from './Thumbnails.svelte';
 
-// Editable page-number input — Enter jumps directly to that page.
-function onPageInput(e: Event) {
-  const t = e.currentTarget as HTMLInputElement;
-  const n = parseInt(t.value, 10);
-  if (Number.isFinite(n)) editor.goTo(n - 1);
-  t.value = String(editor.activeIdx + 1);
+// Editable page-number input. Typing or clicking the spinner navigates
+// immediately (clamped to [1, pageCount]). Selecting on focus so users
+// can just start typing.
+let pageInputEl = $state<HTMLInputElement>();
+
+function onPageInput(event: Event): void {
+  const input = event.currentTarget as HTMLInputElement;
+  const parsed = parseInt(input.value, 10);
+  if (!Number.isFinite(parsed)) return;
+  const target = Math.max(1, Math.min(editor.pageCount, parsed));
+  editor.goTo(target - 1);
+}
+
+function onPageBlur(event: Event): void {
+  // Snap the displayed value back to the (clamped) active page on blur,
+  // so a stray "12" in a 5-page session doesn't linger in the field.
+  const input = event.currentTarget as HTMLInputElement;
+  input.value = String(editor.activeIdx + 1);
 }
 
 // Theme toggle — `class="dark"` on <html> is the default (set in app.html).
@@ -135,16 +147,22 @@ function onKeyDown(e: KeyboardEvent) {
     return;
   }
 
-  // Multi-page navigation: PageUp/PageDown, or Cmd/Ctrl + ←/→.
+  // Multi-page navigation:
+  //   PageUp / PageDown                always
+  //   Cmd/Ctrl + ←/→/↑/↓                always (works even with a selection)
+  //   Bare ←/→                          only when no box is selected (so
+  //                                     a future "arrow-nudges-selected-box"
+  //                                     feature won't conflict with this).
   if (editor.hasMultiple) {
+    const noSelection = editor.selectedIds.size === 0;
     const goPrev =
       e.key === 'PageUp' ||
-      (cmd && e.key === 'ArrowLeft') ||
-      (cmd && e.key === 'ArrowUp');
+      (cmd && (e.key === 'ArrowLeft' || e.key === 'ArrowUp')) ||
+      (noSelection && e.key === 'ArrowLeft');
     const goNext =
       e.key === 'PageDown' ||
-      (cmd && e.key === 'ArrowRight') ||
-      (cmd && e.key === 'ArrowDown');
+      (cmd && (e.key === 'ArrowRight' || e.key === 'ArrowDown')) ||
+      (noSelection && e.key === 'ArrowRight');
     if (goPrev) {
       e.preventDefault();
       editor.prev();
@@ -218,20 +236,29 @@ const meta = $derived(editor.img ? `${editor.filename} · ${editor.width}×${edi
             <ChevronLeft class="h-3.5 w-3.5" />
           </Button>
           <input
+            bind:this={pageInputEl}
             type="number"
             min="1"
             max={editor.pageCount}
             value={editor.activeIdx + 1}
-            onchange={onPageInput}
+            oninput={onPageInput}
+            onblur={onPageBlur}
+            onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
             onkeydown={(e) => {
               if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
             }}
-            class="h-5 w-9 rounded-sm border border-transparent bg-transparent px-1 text-center font-mono text-[11px] tabular-nums text-foreground focus:border-border focus:bg-background focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            aria-label="Page number"
+            class="h-5 w-9 rounded-sm border border-border bg-background px-1 text-center font-mono text-[11px] tabular-nums text-foreground transition-colors hover:border-primary focus:border-primary focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            aria-label="Page number (type to jump)"
+            title="Type a page number to jump"
           />
-          <span class="px-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+          <button
+            type="button"
+            class="px-0.5 font-mono text-[11px] tabular-nums text-muted-foreground hover:text-foreground"
+            onclick={() => pageInputEl?.focus()}
+            title="Jump to a specific page"
+          >
             / {editor.pageCount}
-          </span>
+          </button>
           <Button
             variant="ghost"
             size="sm"

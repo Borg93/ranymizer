@@ -1,5 +1,5 @@
 <script lang="ts">
-import { ZoomIn, ZoomOut, Maximize2, Upload } from 'lucide-svelte';
+import { Loader2, Maximize2, Upload, ZoomIn, ZoomOut } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { Separator } from '$lib/components/ui/separator';
@@ -350,6 +350,20 @@ const cursorClass = $derived.by(() => {
 />
 
 <div class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+  {#if editor.loading && editor.hasImage}
+    <!-- Canvas-scoped loading overlay so the sidebars + navbar stay
+         interactive. The initial-load uses the full-screen Loading
+         component instead. -->
+    <div
+      class="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background/55 backdrop-blur-[2px]"
+    >
+      <Loader2 class="h-5 w-5 animate-spin text-primary" />
+      <span class="font-mono text-[11px] tracking-wide text-muted-foreground">
+        {editor.loadingMessage || 'running pipeline…'}
+      </span>
+    </div>
+  {/if}
+
   <div
     class="canvas-scroll relative flex-1 overflow-auto"
     onwheel={onWheel}

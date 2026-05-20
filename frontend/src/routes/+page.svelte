@@ -23,7 +23,10 @@ function handlePaste(event: ClipboardEvent): void {
 
 <Editor />
 
-{#if editor.loading}
+<!-- Full-screen blur only during the initial load (no image yet). During a
+     re-run we show a localised spinner inside the canvas so the sidebars
+     and navbar stay interactive. -->
+{#if editor.loading && !editor.hasImage}
   <Loading />
 {/if}
 
