@@ -4,6 +4,7 @@ import {
   Check,
   CheckSquare,
   Copy,
+  ListChecks,
   Pencil,
   Search,
   Square,
@@ -15,7 +16,16 @@ import { editor } from '$lib/state.svelte';
 
 let query = $state('');
 let editingId = $state<number | null>(null);
+let bulkMode = $state(false);
 const activeLabelFilter = new SvelteSet<string>();
+
+function toggleBulkMode(): void {
+  bulkMode = !bulkMode;
+  if (!bulkMode) editor.clearSelection();
+  // Leaving any in-flight edit mode when entering bulk mode so the row
+  // becomes click-to-toggle, not click-to-edit.
+  editingId = null;
+}
 
 // Element ref for the scrollable rows container — used to scroll the
 // canvas-selected row back into view when the user clicks a box on the
@@ -165,7 +175,8 @@ function onRowClick(event: MouseEvent, id: number): void {
     editor.selectRange(id, filteredIds);
     return;
   }
-  if (event.metaKey || event.ctrlKey) {
+  // In bulk mode plain clicks toggle; cmd/ctrl still toggles (no-op redirect).
+  if (bulkMode || event.metaKey || event.ctrlKey) {
     editor.selectToggle(id);
     return;
   }
@@ -215,6 +226,17 @@ function bulkDelete(): void {
           {editor.duplicateIds.size}
         </span>
       {/if}
+
+      <button
+        type="button"
+        class="ml-auto flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10.5px] transition-colors data-[active=true]:border-primary data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=false]:text-muted-foreground data-[active=false]:hover:text-foreground"
+        data-active={bulkMode}
+        onclick={toggleBulkMode}
+        title={bulkMode ? 'Exit bulk select' : 'Bulk select (click rows to toggle)'}
+      >
+        <ListChecks class="h-3 w-3" />
+        <span>Bulk</span>
+      </button>
     </div>
 
     <div class="relative mt-2">
@@ -270,7 +292,8 @@ function bulkDelete(): void {
     {/if}
   </header>
 
-  <!-- Bulk actions: only visible when something is selected. -->
+  <!-- Bulk actions bar — only mounted in bulk mode. -->
+  {#if bulkMode}
   <div
     class="sticky top-[calc(2.5rem+1.75rem)] z-10 flex items-center gap-1.5 border-b border-border bg-card/95 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm"
   >
@@ -331,9 +354,10 @@ function bulkDelete(): void {
         <X class="h-3.5 w-3.5" />
       </button>
     {:else}
-      <span class="ml-1">no selection</span>
+      <span class="ml-1">click rows to toggle</span>
     {/if}
   </div>
+  {/if}
 
   {#if filteredRows.length === 0}
     <div class="px-4 py-6 text-center text-xs italic text-text3">
