@@ -54,31 +54,14 @@ export type EditorBox = Box & {
 export type Mode = 'select' | 'draw';
 
 /**
- * User-configurable pipeline knobs. Persisted to localStorage, read by the
- * engine before each analyse(). Engines that don't honour a field should
- * ignore it gracefully — mock honours what it can simulate, backend honours
- * what server.py supports. Field names mirror PaddleOCR-VL / GLiNER2 docs
- * so the wire mapping stays one-to-one.
+ * User-configurable pipeline knobs that change *what the model produces*.
+ * Infrastructure choices (engine, device, backend URL, API keys,
+ * quantize/compile, etc.) live elsewhere — those control how inference runs,
+ * not the content of the output. Persisted to localStorage and read by the
+ * engine before each analyse().
  */
-export type PipelineVersion = 'v1' | 'v1.5';
-export type InferenceEngine = 'paddle' | 'paddle_static' | 'paddle_dynamic' | 'transformers';
-export type VlmBackend =
-  | ''
-  | 'vllm-server'
-  | 'sglang-server'
-  | 'fastdeploy-server'
-  | 'mlx-vlm-server'
-  | 'llama-cpp-server';
-
 export type PipelineConfig = {
-  /** PaddleOCR-VL pipeline version. */
-  pipelineVersion: PipelineVersion;
-  /** Inference engine PaddleOCR resolves to (paddle / transformers). */
-  engine: InferenceEngine;
-  /** Device string, e.g. 'cpu', 'gpu:0', 'mps'. Free-form. */
-  device: string;
-
-  /** PaddleOCR-VL layout + preprocessing knobs. */
+  /** PaddleOCR-VL layout + preprocessing knobs that change the parsed output. */
   paddleocr: {
     /** Layout detection score threshold (0..1). */
     layoutThreshold: number;
@@ -90,13 +73,8 @@ export type PipelineConfig = {
     useOcrForImageBlock: boolean;
   };
 
-  /** VLM-recognition backend + sampling. */
+  /** VLM sampling parameters that change how the recogniser writes its output. */
   vlm: {
-    backend: VlmBackend;
-    serverUrl: string;
-    apiModelName: string;
-    /** Stored in plain localStorage — fine for local dev, rotate before sharing. */
-    apiKey: string;
     temperature: number;
     topP: number;
     repetitionPenalty: number;
@@ -113,9 +91,6 @@ export type PipelineConfig = {
     threshold: number;
     /** Label keys to detect. Empty array = use the engine's default. */
     enabledLabels: string[];
-    mapLocation: 'cpu' | 'cuda';
-    quantize: boolean;
-    compile: boolean;
   };
 };
 
@@ -136,9 +111,6 @@ export const DEFAULT_PII_LABELS = [
 ] as const;
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  pipelineVersion: 'v1.5',
-  engine: 'paddle',
-  device: 'gpu:0',
   paddleocr: {
     layoutThreshold: 0.5,
     useDocOrientationClassify: false,
@@ -149,10 +121,6 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     useOcrForImageBlock: false,
   },
   vlm: {
-    backend: '',
-    serverUrl: '',
-    apiModelName: 'PaddlePaddle/PaddleOCR-VL-1.5',
-    apiKey: '',
     temperature: 0,
     topP: 1,
     repetitionPenalty: 1,
@@ -164,9 +132,6 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     modelName: 'fastino/gliner2-privacy-filter-PII-multi',
     threshold: 0.5,
     enabledLabels: [...DEFAULT_PII_LABELS],
-    mapLocation: 'cuda',
-    quantize: true,
-    compile: true,
   },
 };
 

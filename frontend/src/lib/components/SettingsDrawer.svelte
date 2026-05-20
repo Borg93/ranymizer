@@ -1,12 +1,7 @@
 <script lang="ts">
 import { Play, RotateCcw, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
-import {
-  DEFAULT_PII_LABELS,
-  type InferenceEngine,
-  type PipelineVersion,
-  type VlmBackend,
-} from '$lib/types';
+import { DEFAULT_PII_LABELS } from '$lib/types';
 import { Button } from '$lib/components/ui/button';
 import CollapsibleSection from './CollapsibleSection.svelte';
 
@@ -45,8 +40,6 @@ const labelCount = $derived(editor.pipelineConfig.gliner.enabledLabels.length);
 // Shared classnames for the form controls (kept identical so the drawer feels uniform).
 const inputCls =
   'min-w-0 w-full rounded-sm border border-border bg-background px-2 py-1 text-[12px] text-foreground outline-none focus:border-primary';
-const selectCls =
-  'w-full rounded-sm border border-border bg-background px-2 py-1 text-[12px] text-foreground';
 const fieldLabelCls =
   'flex flex-col gap-1 text-[11px] text-muted-foreground';
 const rowToggleCls =
@@ -79,60 +72,6 @@ const rowToggleCls =
     </header>
 
     <div class="flex-1 overflow-y-auto">
-      <!-- ─── Runtime ────────────────────────────────────────────────── -->
-      <CollapsibleSection title="Runtime">
-        <div class="flex flex-col gap-3">
-          <label class={fieldLabelCls}>
-            <span>Pipeline version</span>
-            <select
-              class={selectCls}
-              value={editor.pipelineConfig.pipelineVersion}
-              onchange={(e) => {
-                editor.pipelineConfig.pipelineVersion = (e.currentTarget as HTMLSelectElement)
-                  .value as PipelineVersion;
-                persist();
-              }}
-            >
-              <option value="v1.5">v1.5 (default)</option>
-              <option value="v1">v1</option>
-            </select>
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>Inference engine</span>
-            <select
-              class={selectCls}
-              value={editor.pipelineConfig.engine}
-              onchange={(e) => {
-                editor.pipelineConfig.engine = (e.currentTarget as HTMLSelectElement)
-                  .value as InferenceEngine;
-                persist();
-              }}
-            >
-              <option value="paddle">paddle (auto)</option>
-              <option value="paddle_static">paddle_static</option>
-              <option value="paddle_dynamic">paddle_dynamic</option>
-              <option value="transformers">transformers</option>
-            </select>
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>Device</span>
-            <input
-              type="text"
-              class={inputCls}
-              placeholder="cpu, gpu:0, mps, npu:0…"
-              value={editor.pipelineConfig.device}
-              oninput={(e) => {
-                editor.pipelineConfig.device = (e.currentTarget as HTMLInputElement).value;
-                persist();
-              }}
-            />
-            <span class="text-[10.5px] text-text3">Free-form. Server picks the first GPU when empty.</span>
-          </label>
-        </div>
-      </CollapsibleSection>
-
       <!-- ─── GLiNER2 (PII) ──────────────────────────────────────────── -->
       <CollapsibleSection title="GLiNER2 — PII detection">
         <div class="flex flex-col gap-3">
@@ -147,6 +86,9 @@ const rowToggleCls =
                 persist();
               }}
             />
+            <span class="text-[10.5px] text-text3">
+              Hugging Face id or local path. Switching this re-loads the model on next Run.
+            </span>
           </label>
 
           <label class={fieldLabelCls}>
@@ -171,47 +113,6 @@ const rowToggleCls =
               class="accent-primary"
             />
             <span class="text-[10.5px] text-text3">Lower = more recall, more false positives.</span>
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>Device map</span>
-            <select
-              class={selectCls}
-              value={editor.pipelineConfig.gliner.mapLocation}
-              onchange={(e) => {
-                editor.pipelineConfig.gliner.mapLocation = (e.currentTarget as HTMLSelectElement)
-                  .value as 'cpu' | 'cuda';
-                persist();
-              }}
-            >
-              <option value="cuda">cuda</option>
-              <option value="cpu">cpu</option>
-            </select>
-          </label>
-
-          <label class={rowToggleCls}>
-            <input
-              type="checkbox"
-              class="accent-primary"
-              checked={editor.pipelineConfig.gliner.quantize}
-              onchange={() => {
-                editor.pipelineConfig.gliner.quantize = !editor.pipelineConfig.gliner.quantize;
-                persist();
-              }}
-            />
-            <span class="flex-1">Quantize (GPU only)</span>
-          </label>
-          <label class={rowToggleCls}>
-            <input
-              type="checkbox"
-              class="accent-primary"
-              checked={editor.pipelineConfig.gliner.compile}
-              onchange={() => {
-                editor.pipelineConfig.gliner.compile = !editor.pipelineConfig.gliner.compile;
-                persist();
-              }}
-            />
-            <span class="flex-1">torch.compile (GPU only)</span>
           </label>
         </div>
       </CollapsibleSection>
@@ -290,76 +191,6 @@ const rowToggleCls =
               </label>
             {/each}
           </div>
-        </div>
-      </CollapsibleSection>
-
-      <!-- ─── VLM inference service ──────────────────────────────────── -->
-      <CollapsibleSection title="VLM inference service" expanded={false}>
-        <div class="flex flex-col gap-3">
-          <label class={fieldLabelCls}>
-            <span>Backend</span>
-            <select
-              class={selectCls}
-              value={editor.pipelineConfig.vlm.backend}
-              onchange={(e) => {
-                editor.pipelineConfig.vlm.backend = (e.currentTarget as HTMLSelectElement)
-                  .value as VlmBackend;
-                persist();
-              }}
-            >
-              <option value="">— local (no remote VLM) —</option>
-              <option value="vllm-server">vllm-server</option>
-              <option value="sglang-server">sglang-server</option>
-              <option value="fastdeploy-server">fastdeploy-server</option>
-              <option value="mlx-vlm-server">mlx-vlm-server (Apple Silicon)</option>
-              <option value="llama-cpp-server">llama-cpp-server</option>
-            </select>
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>Server URL</span>
-            <input
-              type="text"
-              class={inputCls}
-              placeholder="http://localhost:8118/v1"
-              value={editor.pipelineConfig.vlm.serverUrl}
-              oninput={(e) => {
-                editor.pipelineConfig.vlm.serverUrl = (e.currentTarget as HTMLInputElement).value;
-                persist();
-              }}
-            />
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>API model name</span>
-            <input
-              type="text"
-              class={inputCls}
-              placeholder="PaddlePaddle/PaddleOCR-VL-1.5"
-              value={editor.pipelineConfig.vlm.apiModelName}
-              oninput={(e) => {
-                editor.pipelineConfig.vlm.apiModelName = (e.currentTarget as HTMLInputElement).value;
-                persist();
-              }}
-            />
-          </label>
-
-          <label class={fieldLabelCls}>
-            <span>API key</span>
-            <input
-              type="password"
-              class={inputCls}
-              placeholder="(only for hosted services)"
-              value={editor.pipelineConfig.vlm.apiKey}
-              oninput={(e) => {
-                editor.pipelineConfig.vlm.apiKey = (e.currentTarget as HTMLInputElement).value;
-                persist();
-              }}
-            />
-            <span class="text-[10.5px] text-text3">
-              Stored in localStorage. Rotate or clear before sharing the machine.
-            </span>
-          </label>
         </div>
       </CollapsibleSection>
 
