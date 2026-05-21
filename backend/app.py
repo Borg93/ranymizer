@@ -136,7 +136,9 @@ def get_ocr_for(
     """Per-request pipeline. `None` for any flag means "use the env default"
     so an empty config still hits the shared singleton."""
     key = (
-        USE_DOC_ORIENTATION_CLASSIFY if use_doc_orientation_classify is None else use_doc_orientation_classify,
+        USE_DOC_ORIENTATION_CLASSIFY
+        if use_doc_orientation_classify is None
+        else use_doc_orientation_classify,
         USE_DOC_UNWARPING if use_doc_unwarping is None else use_doc_unwarping,
         USE_TEXTLINE_ORIENTATION if use_textline_orientation is None else use_textline_orientation,
     )

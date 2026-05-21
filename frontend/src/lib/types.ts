@@ -211,7 +211,10 @@ export const DEFAULT_LABEL_RULES: Record<string, LabelRule> = {
     threshold: 0,
     validateLuhn: false,
   },
-  url: { regex: '^https?://', regexMode: 'partial', threshold: 0, validateLuhn: false },
+  // GLiNER2 often extracts URL candidates without the scheme (`www.x.se`,
+  // `example.com/page`). A `^https?://` regex would reject those. Trust the
+  // model by default; tighten via the inspector if needed.
+  url: { ...EMPTY_LABEL_RULE },
   ip_address: {
     regex: '^(\\d{1,3}\\.){3}\\d{1,3}$',
     regexMode: 'full',

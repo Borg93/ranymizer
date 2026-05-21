@@ -13,6 +13,7 @@ import {
   MarkerType,
   type Node,
   type Edge,
+  type NodeTypes,
 } from '@xyflow/svelte';
 import '@xyflow/svelte/dist/style.css';
 import PaddleNode from './pipeline/PaddleNode.svelte';
@@ -20,7 +21,10 @@ import GlinerNode from './pipeline/GlinerNode.svelte';
 import IoNode from './pipeline/IoNode.svelte';
 import PipelineInspector from './pipeline/PipelineInspector.svelte';
 
-const nodeTypes = { paddle: PaddleNode, gliner: GlinerNode, io: IoNode };
+// SvelteFlow's NodeTypes index signature is a *general* Node<unknown,…>
+// component; IoNode narrows its data type. Cast is the documented escape
+// hatch — runtime shape matches.
+const nodeTypes = { paddle: PaddleNode, gliner: GlinerNode, io: IoNode } as unknown as NodeTypes;
 
 // Static layout — positions are fixed; nodes are compact summaries. Edge
 // arrows reflect data flow. Detailed editing lives in PipelineInspector

@@ -5,7 +5,7 @@
  * right panel — nodes stay light, the inspector carries the noisy forms.
  */
 import * as v from 'valibot';
-import { Plus, Settings2, Trash2, X } from 'lucide-svelte';
+import { Copy, FileJson, Plus, Settings2, Trash2, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { CustomLabelKeySchema } from '$lib/pipelineConfig.schema';
 import {
@@ -19,6 +19,29 @@ import ResizeHandle from '../ResizeHandle.svelte';
 
 type Props = { selectedId: string | null };
 let { selectedId }: Props = $props();
+
+/** Last-run response for the active page — surfaced by the `output` node
+ *  debug view. Defined as a derived snapshot so it tracks page switches
+ *  without copying. */
+const lastResponse = $derived({
+  filename: editor.pages[editor.activeIdx]?.filename ?? null,
+  width: editor.pages[editor.activeIdx]?.width ?? 0,
+  height: editor.pages[editor.activeIdx]?.height ?? 0,
+  spans: editor.spans,
+  boxes: editor.boxes,
+  ocrLines: editor.ocrLines,
+});
+
+let copyState = $state<'idle' | 'copied'>('idle');
+async function copyResponseJson(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(lastResponse, null, 2));
+    copyState = 'copied';
+    setTimeout(() => (copyState = 'idle'), 1200);
+  } catch {
+    /* clipboard may be blocked in some browsers/contexts — ignore */
+  }
+}
 
 // Resizable — same drag handle UX as the editor's left text panel and right
 // tool sidebar. State lives here; drag mechanics + CSS in <ResizeHandle>.
@@ -112,7 +135,7 @@ function addCustom(): void {
     return;
   }
   const key = parsed.output;
-  if (DEFAULT_PII_LABELS.includes(key) || gliner.customLabels[key]) {
+  if ((DEFAULT_PII_LABELS as readonly string[]).includes(key) || gliner.customLabels[key]) {
     addError = `"${key}" already exists`;
     return;
   }
@@ -415,6 +438,71 @@ const inputCls =
           {/if}
         </div>
       </details>
+    </div>
+  {:else if selectedId === 'output'}
+    <header class="border-b border-border px-4 py-3">
+      <div class="text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">Output</div>
+      <div class="flex items-center gap-2">
+        <FileJson class="h-4 w-4 text-primary" />
+        <div class="text-[13.5px] font-semibold text-foreground">Last response</div>
+      </div>
+      <p class="mt-1 text-[11px] text-muted-foreground">
+        Raw payload returned by <code>/anonymize_screenshot</code> for the active page. Use it to verify which settings actually took effect.
+      </p>
+    </header>
+
+    <div class="flex flex-1 flex-col gap-3 overflow-hidden p-3">
+      <!-- Summary chips: counts per category from the last run. -->
+      <div class="grid grid-cols-3 gap-2 text-center text-[10.5px]">
+        <div class="rounded border border-border bg-background/40 px-2 py-1.5">
+          <div class="font-mono text-[15px] tabular-nums text-foreground">{lastResponse.spans.length}</div>
+          <div class="mt-0.5 text-text3">spans</div>
+        </div>
+        <div class="rounded border border-border bg-background/40 px-2 py-1.5">
+          <div class="font-mono text-[15px] tabular-nums text-foreground">{lastResponse.boxes.length}</div>
+          <div class="mt-0.5 text-text3">boxes</div>
+        </div>
+        <div class="rounded border border-border bg-background/40 px-2 py-1.5">
+          <div class="font-mono text-[15px] tabular-nums text-foreground">{lastResponse.ocrLines.length}</div>
+          <div class="mt-0.5 text-text3">ocr lines</div>
+        </div>
+      </div>
+
+      {#if lastResponse.spans.length > 0}
+        <!-- Per-label tally — fastest sanity check that a knob changed
+             behaviour (e.g. URL appearing/disappearing after relaxing the
+             regex). -->
+        <div class="rounded border border-border">
+          <div class="border-b border-border px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-text3">
+            By label
+          </div>
+          <ul class="divide-y divide-border">
+            {#each Object.entries(lastResponse.spans.reduce((acc: Record<string, number>, s) => { acc[s.label] = (acc[s.label] ?? 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]) as [label, count] (label)}
+              <li class="flex items-center justify-between px-2.5 py-1 font-mono text-[11px]">
+                <span class="truncate text-foreground">{label}</span>
+                <span class="tabular-nums text-text3">{count}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      <!-- JSON block + copy. Limit height so the panel stays scrollable. -->
+      <div class="flex min-h-0 flex-1 flex-col rounded border border-border">
+        <div class="flex items-center justify-between border-b border-border px-2.5 py-1.5">
+          <span class="text-[10px] font-medium uppercase tracking-[0.08em] text-text3">JSON</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10.5px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            onclick={copyResponseJson}
+            disabled={lastResponse.spans.length === 0 && lastResponse.boxes.length === 0 && lastResponse.ocrLines.length === 0}
+          >
+            <Copy class="h-3 w-3" />
+            {copyState === 'copied' ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <pre class="m-0 min-h-0 flex-1 overflow-auto bg-background/40 p-2.5 font-mono text-[10.5px] leading-snug text-foreground"><code>{JSON.stringify(lastResponse, null, 2)}</code></pre>
+      </div>
     </div>
   {:else}
     <header class="border-b border-border px-4 py-3">

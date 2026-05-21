@@ -4,12 +4,12 @@ Mirrors `frontend/src/lib/pipelineConfig.schema.ts` (valibot). Keep these two
 in lockstep when you add fields. We treat the wire payload defensively —
 unknown fields are ignored, malformed fields fall back to safe defaults.
 """
+
 from __future__ import annotations
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 RegexMode = Literal["full", "partial", "exclude"]
 

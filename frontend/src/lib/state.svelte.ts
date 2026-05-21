@@ -915,12 +915,6 @@ export class EditorState {
     return c;
   }
 
-  /** Filename without extension. */
-  #pageStem(pageIdx: number): string {
-    const filename = this.pages[pageIdx]?.filename ?? `page-${pageIdx + 1}`;
-    return filename.replace(/\.[^/.]+$/, '');
-  }
-
   /** Render one page to a PNG Blob. */
   async pageToPngBlob(pageIdx: number): Promise<Blob | null> {
     const canvas = this.renderPageCanvas(pageIdx);

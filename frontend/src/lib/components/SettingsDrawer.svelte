@@ -16,7 +16,9 @@ function close(): void {
 }
 
 function applyAndRun(): Promise<void> {
-  close();
+  // Stay in the settings view — the user explicitly asked for this so they
+  // can A/B knob changes against the result without bouncing back to the
+  // canvas every time. The X / Esc still close.
   return editor.run();
 }
 

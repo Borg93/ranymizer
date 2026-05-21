@@ -1,9 +1,10 @@
 <script lang="ts">
 /** Small read-only I/O bookend (Image input, Pixel boxes output). */
-import { Handle, Position, type NodeProps } from '@xyflow/svelte';
+import { Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
 
 type IoData = { label: string; sub: string; side: 'in' | 'out' };
-let { data, selected }: NodeProps<IoData> = $props();
+type IoNodeType = Node<IoData, 'io'>;
+let { data, selected }: NodeProps<IoNodeType> = $props();
 </script>
 
 <div
