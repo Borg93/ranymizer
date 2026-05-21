@@ -8,6 +8,7 @@ import { Button } from '$lib/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '$lib/components/ui/toggle-group';
 import { Badge } from '$lib/components/ui/badge';
 import CollapsibleSection from './CollapsibleSection.svelte';
+import ResizeHandle from './ResizeHandle.svelte';
 
 // All known category keys, sorted so the picker order is stable.
 const categoryKeys = $derived(['custom', ...Object.keys(editor.catMeta).sort()]);
@@ -21,31 +22,9 @@ type Props = {
 };
 let { onDownload, onCopy, onExportText }: Props = $props();
 
-// Resizable width — drag the left edge to adjust.
-const MIN_W = 220;
-const MAX_W = 520;
+// Resizable width — drag the left edge. State lives here; the drag handle
+// + window listeners + CSS are in the shared <ResizeHandle> component.
 let width = $state(272);
-let resizing = $state(false);
-let startX = 0;
-let startW = 0;
-
-function onResizeStart(ev: MouseEvent) {
-  if (ev.button !== 0) return;
-  ev.preventDefault();
-  resizing = true;
-  startX = ev.clientX;
-  startW = width;
-}
-
-function onResizeMove(ev: MouseEvent) {
-  if (!resizing) return;
-  const next = startW + (startX - ev.clientX);
-  width = Math.max(MIN_W, Math.min(MAX_W, next));
-}
-
-function onResizeEnd() {
-  resizing = false;
-}
 
 const summary = $derived.by(() => {
   const visible = editor.visibleBoxes;
@@ -80,24 +59,11 @@ const categoryRows = $derived(
 );
 </script>
 
-<svelte:window onmousemove={onResizeMove} onmouseup={onResizeEnd} />
-
 <aside
-  class="relative flex shrink-0 flex-col overflow-y-auto border-l border-border bg-card max-md:w-full max-md:max-h-[44vh] max-md:border-l-0 max-md:border-t"
+  class="relative flex shrink-0 flex-col overflow-y-auto border-r border-border bg-card max-md:w-full max-md:max-h-[44vh] max-md:border-r-0 max-md:border-b"
   style:width="{width}px"
 >
-  <!-- Resize handle — drag horizontally to set sidebar width. Visible by
-       default with a subtle grip; primary-tinted on hover / active. -->
-  <div
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize sidebar"
-    class="resize-handle absolute -left-1.5 top-0 z-10 flex h-full w-3 cursor-ew-resize items-center justify-center max-md:hidden"
-    class:active={resizing}
-    onmousedown={onResizeStart}
-  >
-    <span class="grip" aria-hidden="true"></span>
-  </div>
+  <ResizeHandle side="right" bind:width min={220} max={520} hideOnMobile />
   <!-- Tool -->
   <section class="border-b border-border px-4 py-3.5">
     <div class="mb-2 flex items-center gap-2 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
@@ -344,20 +310,3 @@ const categoryRows = $derived(
 
 <ShortcutHelp bind:open={helpOpen} />
 
-<style>
-  .resize-handle .grip {
-    width: 2px;
-    height: 28px;
-    border-radius: 2px;
-    background: var(--border-strong, rgba(255, 255, 255, 0.22));
-    transition: background-color 120ms ease, height 120ms ease;
-  }
-  .resize-handle:hover .grip {
-    background: var(--primary, #818cf8);
-    height: 56px;
-  }
-  .resize-handle.active .grip {
-    background: var(--primary, #818cf8);
-    height: 100%;
-  }
-</style>

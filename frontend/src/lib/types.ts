@@ -101,6 +101,14 @@ export type PipelineConfig = {
     descriptions: Record<string, string>;
     /** Per-label post-filters. See {@link LabelRule}. */
     rules: Record<string, LabelRule>;
+    /**
+     * User-defined labels on top of the default PII set. GLiNER2 is
+     * label-conditioned — any key + description we pass at inference time
+     * becomes a candidate category. The frontend uses `displayLabel` for
+     * UI text and `color` for the box stripe; the description is sent to
+     * the model (same shape as `descriptions[label]`).
+     */
+    customLabels: Record<string, { displayLabel: string; color: string; description: string }>;
   };
 };
 
@@ -259,6 +267,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     enabledLabels: [...DEFAULT_PII_LABELS],
     descriptions: { ...DEFAULT_LABEL_DESCRIPTIONS },
     rules: structuredClone(DEFAULT_LABEL_RULES),
+    customLabels: {},
   },
 };
 

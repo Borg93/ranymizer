@@ -15,6 +15,7 @@ import {
 } from 'lucide-svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { editor } from '$lib/state.svelte';
+import ResizeHandle from './ResizeHandle.svelte';
 
 let query = $state('');
 let editingId = $state<number | null>(null);
@@ -42,31 +43,8 @@ $effect(() => {
   el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 });
 
-// Resizable width — drag the right edge to adjust.
-const MIN_WIDTH = 220;
-const MAX_WIDTH = 520;
+// Resizable width — handle on the right edge, owned by <ResizeHandle>.
 let width = $state(300);
-let resizing = $state(false);
-let resizeStartX = 0;
-let resizeStartWidth = 0;
-
-function onResizeStart(event: MouseEvent): void {
-  if (event.button !== 0) return;
-  event.preventDefault();
-  resizing = true;
-  resizeStartX = event.clientX;
-  resizeStartWidth = width;
-}
-
-function onResizeMove(event: MouseEvent): void {
-  if (!resizing) return;
-  const next = resizeStartWidth + (event.clientX - resizeStartX);
-  width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, next));
-}
-
-function onResizeEnd(): void {
-  resizing = false;
-}
 
 function toggleLabelFilter(label: string): void {
   if (activeLabelFilter.has(label)) activeLabelFilter.delete(label);
@@ -225,10 +203,8 @@ function bulkDelete(): void {
 }
 </script>
 
-<svelte:window onmousemove={onResizeMove} onmouseup={onResizeEnd} />
-
 <aside
-  class="relative flex shrink-0 flex-col overflow-x-hidden overflow-y-auto border-r border-border bg-card max-md:hidden"
+  class="relative flex shrink-0 flex-col overflow-x-hidden overflow-y-auto border-l border-border bg-card max-md:hidden"
   style:width="{width}px"
 >
   <header class="sticky top-0 z-10 border-b border-border bg-card px-3 py-2.5">
@@ -546,17 +522,8 @@ function bulkDelete(): void {
     </div>
   {/if}
 
-  <!-- Resize handle on the right edge -->
-  <div
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize text panel"
-    class="resize-handle absolute -right-1.5 top-0 z-10 flex h-full w-3 cursor-ew-resize items-center justify-center"
-    class:active={resizing}
-    onmousedown={onResizeStart}
-  >
-    <span class="grip" aria-hidden="true"></span>
-  </div>
+  <!-- Resize handle on the right edge — mouse-only by design. -->
+  <ResizeHandle side="left" bind:width min={220} max={520} />
 </aside>
 
 <style>
@@ -566,23 +533,5 @@ function bulkDelete(): void {
   .search-input::-webkit-search-decoration {
     -webkit-appearance: none;
     appearance: none;
-  }
-
-  .resize-handle .grip {
-    width: 2px;
-    height: 28px;
-    border-radius: 2px;
-    background: var(--border-strong, rgba(255, 255, 255, 0.22));
-    transition:
-      background-color 120ms ease,
-      height 120ms ease;
-  }
-  .resize-handle:hover .grip {
-    background: var(--primary, #818cf8);
-    height: 56px;
-  }
-  .resize-handle.active .grip {
-    background: var(--primary, #818cf8);
-    height: 100%;
   }
 </style>

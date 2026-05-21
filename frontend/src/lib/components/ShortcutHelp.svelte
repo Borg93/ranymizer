@@ -1,5 +1,5 @@
 <script lang="ts">
-import { X } from 'lucide-svelte';
+import * as Dialog from '$lib/components/ui/dialog';
 
 type Props = { open?: boolean };
 let { open = $bindable(false) }: Props = $props();
@@ -64,46 +64,27 @@ const groups: Group[] = [
 ];
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && open) open = false;
-  if (event.key === '?' && !open) open = true;
-}
-
-function close(): void {
-  open = false;
+  // Esc is handled by the Dialog itself; we only intercept "?" to open.
+  if (event.key === '?' && !open) {
+    const t = event.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    open = true;
+  }
 }
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
 
-{#if open}
-  <div
-    class="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
-    role="button"
-    tabindex="-1"
-    aria-label="Close shortcuts"
-    onclick={close}
-    onkeydown={(e) => e.key === 'Enter' && close()}
-  ></div>
+<Dialog.Root bind:open>
+  <Dialog.Content class="w-[560px] max-w-[90vw]">
+    <Dialog.Header>
+      <Dialog.Title>Keyboard shortcuts</Dialog.Title>
+      <Dialog.Description>
+        Press <kbd class="mx-0.5 rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px] text-foreground">?</kbd> anywhere to open · <kbd class="mx-0.5 rounded-sm border border-border bg-background px-1 py-px font-mono text-[10px] text-foreground">Esc</kbd> to close
+      </Dialog.Description>
+    </Dialog.Header>
 
-  <div
-    class="fixed left-1/2 top-1/2 z-50 flex w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Keyboard shortcuts"
-  >
-    <header class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
-      <span class="flex-1 text-[13.5px] font-medium tracking-tight">Keyboard shortcuts</span>
-      <button
-        type="button"
-        class="rounded-md p-1 text-muted-foreground hover:bg-surface2 hover:text-foreground"
-        onclick={close}
-        aria-label="Close"
-      >
-        <X class="h-3.5 w-3.5" />
-      </button>
-    </header>
-
-    <div class="grid grid-cols-2 gap-x-6 gap-y-4 overflow-y-auto p-4 max-h-[70vh]">
+    <div class="grid max-h-[60vh] grid-cols-2 gap-x-6 gap-y-4 overflow-y-auto">
       {#each groups as group (group.title)}
         <section class="flex flex-col gap-1.5">
           <h3 class="text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">
@@ -130,10 +111,5 @@ function close(): void {
         </section>
       {/each}
     </div>
-
-    <footer class="border-t border-border px-4 py-2 font-mono text-[10.5px] text-text3">
-      Press <kbd class="mx-0.5 rounded-sm border border-border bg-background px-1 py-px text-foreground">?</kbd>
-      anywhere to open this · <kbd class="mx-0.5 rounded-sm border border-border bg-background px-1 py-px text-foreground">Esc</kbd> to close
-    </footer>
-  </div>
-{/if}
+  </Dialog.Content>
+</Dialog.Root>

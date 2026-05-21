@@ -86,26 +86,69 @@ _gliner_instance: GLiNER2 | None = None
 
 
 def get_ocr() -> PaddleOCR:
+    """Default OCR pipeline using env-var-driven flags. Used when the request
+    didn't override preprocessing settings."""
     global _ocr_instance
     if _ocr_instance is not None:
         return _ocr_instance
 
-    dtype = os.getenv("INFERENCE_DTYPE", "float32")
-    print(
-        f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  lang={OCR_LANG}  dtype={dtype}  "
-        f"orient={USE_DOC_ORIENTATION_CLASSIFY}  unwarp={USE_DOC_UNWARPING}  "
-        f"textline={USE_TEXTLINE_ORIENTATION}"
-    )
-    _ocr_instance = PaddleOCR(
-        device=DEVICE,
-        engine="transformers",
-        lang=OCR_LANG,
+    _ocr_instance = _build_ocr(
         use_doc_orientation_classify=USE_DOC_ORIENTATION_CLASSIFY,
         use_doc_unwarping=USE_DOC_UNWARPING,
         use_textline_orientation=USE_TEXTLINE_ORIENTATION,
-        engine_config={"dtype": dtype},
     )
     return _ocr_instance
+
+
+# Cache of PaddleOCR pipelines keyed by the (orient, unwarp, textline) tuple.
+# Building a pipeline reloads model weights, so we memoise so toggling a
+# preprocessing flag on one request doesn't pay the cold start every time.
+_ocr_cache: dict[tuple[bool, bool, bool], PaddleOCR] = {}
+
+
+def _build_ocr(
+    use_doc_orientation_classify: bool,
+    use_doc_unwarping: bool,
+    use_textline_orientation: bool,
+) -> PaddleOCR:
+    dtype = os.getenv("INFERENCE_DTYPE", "float32")
+    print(
+        f"[ocr] loading PaddleOCR 3.5  device={DEVICE}  lang={OCR_LANG}  dtype={dtype}  "
+        f"orient={use_doc_orientation_classify}  unwarp={use_doc_unwarping}  "
+        f"textline={use_textline_orientation}"
+    )
+    return PaddleOCR(
+        device=DEVICE,
+        engine="transformers",
+        lang=OCR_LANG,
+        use_doc_orientation_classify=use_doc_orientation_classify,
+        use_doc_unwarping=use_doc_unwarping,
+        use_textline_orientation=use_textline_orientation,
+        engine_config={"dtype": dtype},
+    )
+
+
+def get_ocr_for(
+    use_doc_orientation_classify: bool | None = None,
+    use_doc_unwarping: bool | None = None,
+    use_textline_orientation: bool | None = None,
+) -> PaddleOCR:
+    """Per-request pipeline. `None` for any flag means "use the env default"
+    so an empty config still hits the shared singleton."""
+    key = (
+        USE_DOC_ORIENTATION_CLASSIFY if use_doc_orientation_classify is None else use_doc_orientation_classify,
+        USE_DOC_UNWARPING if use_doc_unwarping is None else use_doc_unwarping,
+        USE_TEXTLINE_ORIENTATION if use_textline_orientation is None else use_textline_orientation,
+    )
+    # The default singleton owns the default-key slot — share it.
+    if key == (USE_DOC_ORIENTATION_CLASSIFY, USE_DOC_UNWARPING, USE_TEXTLINE_ORIENTATION):
+        return get_ocr()
+    cached = _ocr_cache.get(key)
+    if cached is not None:
+        return cached
+    pipeline = _build_ocr(*key)
+    _ocr_cache[key] = pipeline
+    return pipeline
 
 
 def get_gliner() -> GLiNER2:
@@ -193,9 +236,18 @@ def _extract_page_lines(page: Any, char_offset: int) -> tuple[list[dict[str, Any
     return lines, offset
 
 
-def ocr_image(image: Image.Image) -> dict[str, Any]:
+def ocr_image(
+    image: Image.Image,
+    use_doc_orientation_classify: bool | None = None,
+    use_doc_unwarping: bool | None = None,
+    use_textline_orientation: bool | None = None,
+) -> dict[str, Any]:
     """Run PaddleOCR. Returns {"text": joined, "words": [line_dict, ...]}."""
-    pipeline = get_ocr()
+    pipeline = get_ocr_for(
+        use_doc_orientation_classify=use_doc_orientation_classify,
+        use_doc_unwarping=use_doc_unwarping,
+        use_textline_orientation=use_textline_orientation,
+    )
     array = np.array(image.convert("RGB"))
     result = pipeline.predict(array)
 
@@ -248,19 +300,92 @@ def _entity_to_span(label: str, entity: Any) -> dict[str, Any] | None:
     }
 
 
+def _luhn_check(digits: str) -> bool:
+    """Standard Luhn checksum. Works on digit-only strings (post-stripping)."""
+    if not digits or not digits.isdigit():
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for i, ch in enumerate(digits):
+        d = int(ch)
+        if i % 2 == parity:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _apply_post_filter(span: dict[str, Any], rule: dict[str, Any]) -> bool:
+    """Return True if the span passes this label's rule. Rule fields are
+    the same shape as the frontend's LabelRule type."""
+    if not rule:
+        return True
+    text = str(span.get("text", ""))
+
+    # Per-label confidence floor (rule.threshold > 0 overrides the global).
+    rule_threshold = float(rule.get("threshold", 0) or 0)
+    if rule_threshold > 0 and float(span.get("confidence", 1)) < rule_threshold:
+        return False
+
+    # Regex filter — full / partial / exclude.
+    pattern = (rule.get("regex") or "").strip()
+    if pattern:
+        try:
+            re_obj = __import__("re").compile(pattern)
+        except Exception:  # noqa: BLE001
+            re_obj = None
+        if re_obj is not None:
+            mode = rule.get("regexMode", "full")
+            match = re_obj.search(text)
+            if mode == "full":
+                if not (match and match.group(0) == text):
+                    return False
+            elif mode == "partial":
+                if not match:
+                    return False
+            elif mode == "exclude":
+                if match:
+                    return False
+
+    # Luhn — only meaningful on digit-only spans (with separator chars
+    # stripped). Skip when the span has non-digit content (e.g. names).
+    if rule.get("validateLuhn"):
+        digits = "".join(c for c in text if c.isdigit())
+        if digits and not _luhn_check(digits):
+            return False
+
+    return True
+
+
 @_gpu
 def run_pii_analysis(
     text: str,
     threshold: float = 0.5,
+    labels: dict[str, str] | None = None,
+    rules: dict[str, dict[str, Any]] | None = None,
+    allowed_labels: set[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
+    """Run GLiNER2 then apply per-label post-filters.
+
+    - `labels` overrides the default PII_LABELS dict. Custom user labels
+      flow in here.
+    - `allowed_labels` (when provided) filters the model output to the
+      labels the request actually enabled.
+    - `rules` is the per-label post-filter map (regex / threshold / Luhn).
+    """
     if not text or not text.strip():
+        return text, []
+
+    label_dict = labels if labels is not None else PII_LABELS
+    if not label_dict:
         return text, []
 
     model = get_gliner()
     with torch.inference_mode():
         result = model.extract_entities(
             text,
-            PII_LABELS,
+            label_dict,
             threshold=threshold,
             include_spans=True,
             include_confidence=True,
@@ -268,12 +393,16 @@ def run_pii_analysis(
 
     spans: list[dict[str, Any]] = []
     for label, entities in (result.get("entities") or {}).items():
-        if label not in CATEGORIES_META:
+        if allowed_labels is not None and label not in allowed_labels:
             continue
+        rule = (rules or {}).get(label) or {}
         for entity in entities or []:
             span = _entity_to_span(label, entity)
-            if span is not None:
-                spans.append(span)
+            if span is None:
+                continue
+            if not _apply_post_filter(span, rule):
+                continue
+            spans.append(span)
 
     spans.sort(key=lambda s: (s["start"], s["end"]))
     return text, spans

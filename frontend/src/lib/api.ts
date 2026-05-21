@@ -6,7 +6,7 @@
  *   - Prod: Python serves the SvelteKit build from /; same origin.
  */
 import { Client, handle_file } from '@gradio/client';
-import type { AnonymizeResult, CatMeta } from './types';
+import type { AnonymizeResult, CatMeta, PipelineConfig } from './types';
 
 const GRADIO_URL = import.meta.env.DEV
   ? 'http://localhost:7860'
@@ -20,11 +20,18 @@ function getClient() {
   return clientPromise;
 }
 
-/** Upload + run OCR+PII pipeline. Returns the result or an object with `error`. */
-export async function anonymizeScreenshot(file: File): Promise<AnonymizeResult> {
+/** Upload + run OCR+PII pipeline. Returns the result or an object with `error`.
+ *  `config` rides with the request so per-call settings (preprocessing toggles,
+ *  GLiNER2 threshold + labels + per-label rules + custom labels) take effect
+ *  server-side. Sending `undefined` keeps the legacy "use server defaults" path. */
+export async function anonymizeScreenshot(
+  file: File,
+  config?: PipelineConfig,
+): Promise<AnonymizeResult> {
   const client = await getClient();
   const result = await client.predict('/anonymize_screenshot', {
     image: handle_file(file),
+    config: config ?? null,
   });
   const data = (result.data as unknown[])[0] as AnonymizeResult | undefined;
   return data ?? ({ error: 'no data returned' } as AnonymizeResult);

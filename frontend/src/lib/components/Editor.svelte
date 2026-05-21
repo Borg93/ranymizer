@@ -399,7 +399,7 @@ function onKeyDown(e: KeyboardEvent) {
 
   <div class="flex min-h-0 flex-1 max-md:flex-col">
     {#if editor.hasImage}
-      <TextSidebar />
+      <Sidebar onDownload={downloadImage} onCopy={copyToClipboard} onExportText={exportText} />
     {/if}
     <!-- Canvas column owns its own footer (thumbnails) so the sidebars stay
          full-height and aren't pushed up by the carousel. -->
@@ -410,7 +410,7 @@ function onKeyDown(e: KeyboardEvent) {
       {/if}
     </div>
     {#if editor.hasImage}
-      <Sidebar onDownload={downloadImage} onCopy={copyToClipboard} onExportText={exportText} />
+      <TextSidebar />
     {/if}
   </div>
 </div>

@@ -1,70 +1,152 @@
 <script lang="ts">
 /**
- * Three-stage data-flow diagram of the redaction pipeline. Pure SVG so it
- * scales with the drawer width and stays sharp in dark mode.
- *
- *   image  ─► [ PaddleOCR-VL ]  text + boxes ─► [ GLiNER2 ]  spans ─► pixel boxes
- *              (text detection                  (NER over the
- *               + recognition)                   recognised text)
+ * Pipeline as a Svelte Flow graph. Nodes carry their own settings — no
+ * separate "Pipeline (live)" diagram + "Settings" forms duplicating the
+ * same knobs. Reactive arrows, drag, and inline controls come from
+ * @xyflow/svelte.
  */
+import {
+  SvelteFlow,
+  Background,
+  Controls,
+  Position,
+  MarkerType,
+  type Node,
+  type Edge,
+} from '@xyflow/svelte';
+import '@xyflow/svelte/dist/style.css';
+import PaddleNode from './pipeline/PaddleNode.svelte';
+import GlinerNode from './pipeline/GlinerNode.svelte';
+import IoNode from './pipeline/IoNode.svelte';
+import PipelineInspector from './pipeline/PipelineInspector.svelte';
+
+const nodeTypes = { paddle: PaddleNode, gliner: GlinerNode, io: IoNode };
+
+// Static layout — positions are fixed; nodes are compact summaries. Edge
+// arrows reflect data flow. Detailed editing lives in PipelineInspector
+// (right panel), driven by `selectedId` below.
+let nodes = $state<Node[]>([
+  {
+    id: 'input',
+    type: 'io',
+    position: { x: 0, y: 80 },
+    data: { label: 'Image', sub: 'png · pdf', side: 'in' },
+    sourcePosition: Position.Right,
+    deletable: false,
+    draggable: true,
+  },
+  {
+    id: 'paddle',
+    type: 'paddle',
+    position: { x: 180, y: 40 },
+    data: {},
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    deletable: false,
+    draggable: true,
+  },
+  {
+    id: 'gliner',
+    type: 'gliner',
+    position: { x: 480, y: 20 },
+    data: {},
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    deletable: false,
+    draggable: true,
+  },
+  {
+    id: 'output',
+    type: 'io',
+    position: { x: 860, y: 80 },
+    data: { label: 'PII spans', sub: 'redaction canvas', side: 'out' },
+    targetPosition: Position.Left,
+    deletable: false,
+    draggable: true,
+  },
+]);
+
+// Active node id (or null if nothing selected). Svelte Flow flips
+// `node.selected` on the bound nodes array — we mirror that into a single id
+// for PipelineInspector to switch on.
+let selectedId = $derived(
+  nodes.find((n) => (n as { selected?: boolean }).selected)?.id ?? null,
+);
+
+let edges = $state<Edge[]>([
+  {
+    id: 'in-paddle',
+    source: 'input',
+    target: 'paddle',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    style: 'stroke: var(--text3);',
+  },
+  {
+    id: 'paddle-gliner',
+    source: 'paddle',
+    target: 'gliner',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    style: 'stroke: var(--text3);',
+  },
+  {
+    id: 'gliner-out',
+    source: 'gliner',
+    target: 'output',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    style: 'stroke: var(--text3);',
+  },
+]);
 </script>
 
-<div class="flex flex-col gap-3 rounded-md border border-border bg-background/60 p-3">
-  <svg
-    viewBox="0 0 360 110"
-    class="w-full"
-    role="img"
-    aria-label="Pipeline data flow"
-  >
-    <!-- input -->
-    <g>
-      <text x="6" y="14" class="font-mono fill-text3 text-[9px]">INPUT</text>
-      <rect x="0" y="22" width="56" height="46" rx="6" class="fill-card stroke-[var(--border-strong)]" stroke-width="1" />
-      <text x="28" y="42" text-anchor="middle" class="text-[10px] font-medium fill-foreground">Image</text>
-      <text x="28" y="55" text-anchor="middle" class="font-mono text-[8px] fill-text3">png · pdf</text>
-    </g>
-
-    <!-- arrow -->
-    <line x1="60" y1="45" x2="86" y2="45" stroke="currentColor" stroke-width="1" class="text-text3" />
-    <polygon points="86,42 92,45 86,48" class="fill-text3" />
-
-    <!-- PaddleOCR-VL -->
-    <g>
-      <text x="98" y="14" class="font-mono fill-text3 text-[9px]">PADDLEOCR-VL</text>
-      <rect x="92" y="22" width="116" height="64" rx="6" class="fill-card stroke-primary" stroke-width="1.5" />
-      <text x="150" y="40" text-anchor="middle" class="text-[10px] font-medium fill-foreground">Layout + OCR</text>
-      <text x="150" y="54" text-anchor="middle" class="font-mono text-[8.5px] fill-text2">text detection</text>
-      <text x="150" y="65" text-anchor="middle" class="font-mono text-[8.5px] fill-text2">+ recognition</text>
-      <text x="150" y="78" text-anchor="middle" class="font-mono text-[8px] fill-text3">→ lines, boxes, text</text>
-    </g>
-
-    <!-- arrow -->
-    <line x1="212" y1="45" x2="238" y2="45" stroke="currentColor" stroke-width="1" class="text-text3" />
-    <polygon points="238,42 244,45 238,48" class="fill-text3" />
-
-    <!-- GLiNER2 -->
-    <g>
-      <text x="250" y="14" class="font-mono fill-text3 text-[9px]">GLINER2</text>
-      <rect x="244" y="22" width="116" height="64" rx="6" class="fill-card stroke-primary" stroke-width="1.5" />
-      <text x="302" y="40" text-anchor="middle" class="text-[10px] font-medium fill-foreground">NER over text</text>
-      <text x="302" y="54" text-anchor="middle" class="font-mono text-[8.5px] fill-text2">label-conditioned</text>
-      <text x="302" y="65" text-anchor="middle" class="font-mono text-[8.5px] fill-text2">PII extraction</text>
-      <text x="302" y="78" text-anchor="middle" class="font-mono text-[8px] fill-text3">→ char spans</text>
-    </g>
-
-    <!-- output band -->
-    <g>
-      <text x="6" y="100" class="font-mono fill-text3 text-[9px]">FRONTEND</text>
-      <text x="60" y="100" class="font-mono fill-text2 text-[9.5px]">
-        char spans + OCR geometry → pixel boxes drawn on the canvas
-      </text>
-    </g>
-  </svg>
-
-  <p class="text-[10.5px] leading-relaxed text-muted-foreground">
-    PaddleOCR-VL handles <span class="text-foreground">text detection</span> and
-    <span class="text-foreground">recognition</span>. GLiNER2 runs over the
-    recognised text and labels every PII span. The frontend then projects each
-    char-span back onto the OCR line geometry to render a redaction box.
-  </p>
+<div class="flex h-full w-full overflow-hidden bg-background/40">
+  <div class="flex-1 min-w-0">
+    <SvelteFlow
+      bind:nodes
+      bind:edges
+      {nodeTypes}
+      fitView
+      fitViewOptions={{ padding: 0.15 }}
+      nodesConnectable={false}
+      elementsSelectable={true}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background bgColor="transparent" />
+      <Controls showLock={false} />
+    </SvelteFlow>
+  </div>
+  <PipelineInspector {selectedId} />
 </div>
+
+<style>
+  /* Inherit our dark tokens — override Svelte Flow's defaults. */
+  div :global(.svelte-flow) {
+    --xy-background-color: transparent;
+    --xy-edge-stroke: var(--text3);
+    --xy-edge-stroke-width: 1.5;
+    --xy-handle-background-color: var(--primary);
+    --xy-handle-border-color: var(--card);
+  }
+  div :global(.svelte-flow__controls button) {
+    background: var(--card);
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+  div :global(.svelte-flow__controls button:hover) {
+    background: var(--secondary);
+  }
+  div :global(.svelte-flow__node) {
+    font-family: var(--font-sans);
+  }
+  div :global(.svelte-flow__edge-path) {
+    stroke: var(--text3);
+  }
+  div :global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
+    stroke: var(--primary);
+  }
+  div :global(.svelte-flow__arrowhead) {
+    fill: var(--text3);
+  }
+</style>

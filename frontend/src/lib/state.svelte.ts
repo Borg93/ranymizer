@@ -13,6 +13,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { engine } from './engine';
 import { isPdf, pdfToImageFiles } from './pdf';
+import { tryValidate } from './pipelineConfig.schema';
 import {
   type AnonymizeResult,
   type CatMeta,
@@ -46,17 +47,17 @@ function loadPipelineConfig(): PipelineConfig {
   try {
     const raw = localStorage.getItem(PIPELINE_CONFIG_KEY);
     if (!raw) return structuredClone(DEFAULT_PIPELINE_CONFIG);
-    // Deep-merge so an older saved config with missing sections still loads
-    // with new defaults filling the gaps.
+
     const parsed = JSON.parse(raw) as Partial<PipelineConfig>;
-    return {
+
+    // Deep-merge first so an older saved blob with missing sections still
+    // loads with new defaults filling the gaps.
+    const merged: PipelineConfig = {
       paddleocr: { ...DEFAULT_PIPELINE_CONFIG.paddleocr, ...(parsed.paddleocr ?? {}) },
       vlm: { ...DEFAULT_PIPELINE_CONFIG.vlm, ...(parsed.vlm ?? {}) },
       gliner: {
         ...DEFAULT_PIPELINE_CONFIG.gliner,
         ...(parsed.gliner ?? {}),
-        // Per-label maps can grow over time; always start from the default
-        // map so new labels show up even when the saved blob is older.
         descriptions: {
           ...DEFAULT_PIPELINE_CONFIG.gliner.descriptions,
           ...(parsed.gliner?.descriptions ?? {}),
@@ -65,8 +66,22 @@ function loadPipelineConfig(): PipelineConfig {
           ...DEFAULT_PIPELINE_CONFIG.gliner.rules,
           ...(parsed.gliner?.rules ?? {}),
         },
+        customLabels: {
+          ...DEFAULT_PIPELINE_CONFIG.gliner.customLabels,
+          ...(parsed.gliner?.customLabels ?? {}),
+        },
       },
     };
+
+    // Validate against the valibot schema — if a saved field is the wrong
+    // type (corrupted blob, manual edit, post-migration shape change) we
+    // discard the whole thing instead of letting bad data crash the UI.
+    const check = tryValidate(merged);
+    if (!check.ok) {
+      console.warn('[ranymizer] discarding invalid pipeline config:', check.reason);
+      return structuredClone(DEFAULT_PIPELINE_CONFIG);
+    }
+    return merged;
   } catch {
     return structuredClone(DEFAULT_PIPELINE_CONFIG);
   }
@@ -114,7 +129,21 @@ export class EditorState {
   drawLabel = $state('custom');
   // Thumbnail carousel visibility — only matters when there are >1 pages.
   showThumbnails = $state(true);
-  catMeta = $state<Record<string, CatMeta>>({});
+  /** Raw category meta as returned by the backend (color + display label per
+   *  default PII key). User-defined `customLabels` are merged in via the
+   *  `catMeta` derived below. */
+  rawCatMeta = $state<Record<string, CatMeta>>({});
+
+  /** Effective category meta seen by every consumer: backend defaults merged
+   *  with user-defined custom labels from pipelineConfig. */
+  catMeta = $derived.by<Record<string, CatMeta>>(() => {
+    const out: Record<string, CatMeta> = { ...this.rawCatMeta };
+    for (const [key, c] of Object.entries(this.pipelineConfig.gliner.customLabels)) {
+      out[key] = { color: c.color, label: c.displayLabel };
+    }
+    return out;
+  });
+
   activeCats = new SvelteSet<string>();
 
   // ── editor tool state ─────────────────────────────────────────────
@@ -384,8 +413,8 @@ export class EditorState {
         this.pages = [...this.pages, page];
 
         if (this.pages.length === firstNewIdx + 1) {
-          if (Object.keys(this.catMeta).length === 0) {
-            this.catMeta = await catMetaPromise;
+          if (Object.keys(this.rawCatMeta).length === 0) {
+            this.rawCatMeta = await catMetaPromise;
           }
           this.activeIdx = firstNewIdx;
           this.#loadActivePage();

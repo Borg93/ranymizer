@@ -27,10 +27,12 @@ from PIL import Image
 
 from app import (
     CATEGORIES_META,
+    PII_LABELS,
     map_spans_to_boxes,
     ocr_image,
     run_pii_analysis,
 )
+from schema import parse_config
 
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
@@ -71,20 +73,60 @@ def _ocr_line_to_debug_overlay(line: dict) -> dict:
 
 
 @server.api(name="anonymize_screenshot")
-def anonymize_screenshot_api(image: FileData) -> dict:
-    """OCR + PII over an uploaded image. JSON-only response (client keeps the original)."""
+def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> dict:
+    """OCR + PII over an uploaded image. JSON-only response.
+
+    `config` is the frontend's `pipelineConfig` payload (see schema.py).
+    Missing fields fall back to env-driven defaults — so existing clients
+    that don't send a config keep working unchanged.
+    """
     try:
         path = image.get("path") or image.get("url") or ""
         if not path:
             return {"error": "expected an image file"}
 
+        cfg = parse_config(config)
         pil_image = Image.open(path).convert("RGB")
-        ocr = ocr_image(pil_image)
+
+        # OCR with optional preprocessing overrides.
+        ocr = ocr_image(
+            pil_image,
+            use_doc_orientation_classify=cfg.paddleocr.useDocOrientationClassify,
+            use_doc_unwarping=cfg.paddleocr.useDocUnwarping,
+            use_textline_orientation=cfg.paddleocr.useTextlineOrientation,
+        )
 
         spans: list = []
         boxes: list = []
         if ocr["text"].strip():
-            source_text, spans = run_pii_analysis(ocr["text"])
+            # Build the labels dict GLiNER2 conditions on. Defaults + custom
+            # labels (merged), filtered by `enabledLabels` if the client sent
+            # an explicit selection.
+            gliner_cfg = cfg.gliner
+            labels_dict = dict(PII_LABELS)
+            # Allow client to override default descriptions.
+            for key, desc in gliner_cfg.descriptions.items():
+                if key in labels_dict and desc:
+                    labels_dict[key] = desc
+            # Inject custom labels — these are the user-defined PII types.
+            for key, meta in gliner_cfg.customLabels.items():
+                labels_dict[key] = meta.description or meta.displayLabel
+
+            allowed = set(gliner_cfg.enabledLabels) if gliner_cfg.enabledLabels else None
+            # If the client sent an empty allowed set, treat it as "all" so
+            # we don't accidentally silence the model on an unfilled request.
+            if allowed is not None and not allowed:
+                allowed = None
+
+            rules_dict = {k: v.model_dump() for k, v in gliner_cfg.rules.items()}
+
+            source_text, spans = run_pii_analysis(
+                ocr["text"],
+                threshold=gliner_cfg.threshold or 0.5,
+                labels=labels_dict if labels_dict else None,
+                rules=rules_dict,
+                allowed_labels=allowed,
+            )
             if source_text != ocr["text"]:
                 spans = [s for s in spans if s["end"] <= len(ocr["text"])]
             boxes = map_spans_to_boxes(ocr["words"], spans)
