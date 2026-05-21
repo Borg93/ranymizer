@@ -149,6 +149,11 @@ export const DEFAULT_PII_LABELS = [
   'url',
   'ip_address',
   'username',
+  // GDPR Art. 9 / dataskyddslag 3 kap. — sensitive personal data. Mandatory
+  // coverage for municipal documents (social services, school, healthcare).
+  // See Slutrapport IMY-2024-5156 §4.3 + §6.3.
+  'health',
+  'religion_ethnicity',
 ] as const;
 
 /** Empty rule (default for labels without a useful regex). */
@@ -222,6 +227,11 @@ export const DEFAULT_LABEL_RULES: Record<string, LabelRule> = {
     validateLuhn: false,
   },
   username: { ...EMPTY_LABEL_RULE },
+  // Sensitive categories — no regex possible (free-form text). The
+  // handläggare can still raise the per-label threshold to require higher
+  // model confidence before flagging.
+  health: { ...EMPTY_LABEL_RULE },
+  religion_ethnicity: { ...EMPTY_LABEL_RULE },
 };
 
 /**
@@ -244,6 +254,10 @@ export const DEFAULT_LABEL_DESCRIPTIONS: Record<string, string> = {
   url: 'URL or web link',
   ip_address: 'IP address',
   username: 'User name or login handle',
+  health:
+    'Health information: diagnoses, medication, treatment, disability, sick leave, mental health',
+  religion_ethnicity:
+    'Religious belief, philosophical conviction, ethnic origin, or trade-union membership',
 };
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {

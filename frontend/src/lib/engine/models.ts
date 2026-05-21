@@ -120,4 +120,7 @@ export const LOCAL_CAT_META: Record<string, { color: string; label: string }> = 
   bank: { color: '#22d3ee', label: 'Bank details' },
   date: { color: '#94a3b8', label: 'Date' },
   url: { color: '#818cf8', label: 'URL' },
+  // Art. 9 GDPR categories — see backend/app.py CATEGORIES_META.
+  health: { color: '#dc2626', label: 'Health' },
+  religion_ethnicity: { color: '#7c3aed', label: 'Religion / ethnicity' },
 };

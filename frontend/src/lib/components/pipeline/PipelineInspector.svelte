@@ -107,6 +107,8 @@ const SAMPLES: Record<string, string> = {
   url: 'https://ranymizer.dev',
   ip_address: '192.168.1.1',
   username: 'sven_a',
+  health: 'diabetes typ 2, Metformin 500 mg',
+  religion_ethnicity: 'medlem i Svenska kyrkan',
 };
 
 function persist(): void {

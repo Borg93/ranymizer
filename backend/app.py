@@ -62,6 +62,11 @@ PII_LABELS: dict[str, str] = {
     "url": "URL or web link",
     "ip_address": "IP address",
     "username": "User name or login handle",
+    # GDPR Art. 9 / dataskyddslag 3 kap. — sensitive personal data. Required
+    # for municipal documents (social services, school, healthcare) per
+    # Slutrapport IMY-2024-5156, §4.3 and §6.3.
+    "health": "Health information: diagnoses, medication, treatment, disability, sick leave, mental health",
+    "religion_ethnicity": "Religious belief, philosophical conviction, ethnic origin, or trade-union membership",
 }
 
 CATEGORIES_META: dict[str, dict[str, str]] = {
@@ -78,6 +83,8 @@ CATEGORIES_META: dict[str, dict[str, str]] = {
     "url": {"color": "#ec4899", "label": "URL"},
     "ip_address": {"color": "#f43f5e", "label": "IP"},
     "username": {"color": "#64748b", "label": "Username"},
+    "health": {"color": "#dc2626", "label": "Health"},
+    "religion_ethnicity": {"color": "#7c3aed", "label": "Religion / ethnicity"},
 }
 
 

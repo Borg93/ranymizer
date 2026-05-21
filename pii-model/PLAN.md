@@ -21,25 +21,31 @@ frontends; only the final checkpoint crosses the boundary.
 ## 0. Why this exists
 
 The categories Ranymizer redacts (see
-`frontend/src/lib/components/Landing.svelte` and
-`frontend/src/lib/engine/models.ts`):
+`frontend/src/lib/types.ts` `DEFAULT_PII_LABELS` and
+`backend/app.py` `PII_LABELS`):
 
-| label                 | description                                  |
-|-----------------------|----------------------------------------------|
-| `person`              | Names of people                              |
-| `email`               | Email addresses                              |
-| `phone`               | Phone numbers (Swedish + international)      |
-| `address`             | Street addresses, postal codes               |
-| `personnummer`        | Swedish personal ID (YYYYMMDD-XXXX)          |
-| `organisationsnummer` | Swedish org. number (XXXXXX-XXXX)            |
-| `bank`                | Bankgiro / Plusgiro / IBAN / account numbers |
-| `date`                | Calendar dates                               |
-| `url`                 | URLs                                         |
+| label                  | category                | description                                  |
+|------------------------|-------------------------|----------------------------------------------|
+| `person`               | direct PII              | Names of people                              |
+| `email`                | direct PII              | Email addresses                              |
+| `phone`                | direct PII              | Phone numbers (Swedish + international)      |
+| `address`              | direct PII              | Street addresses, postal codes               |
+| `personnummer`         | direct PII              | Swedish personal ID (YYYYMMDD-XXXX)          |
+| `organisationsnummer`  | direct PII              | Swedish org. number (XXXXXX-XXXX)            |
+| `bank`                 | direct PII              | Bankgiro / Plusgiro / IBAN / account numbers |
+| `date`                 | direct PII              | Calendar dates                               |
+| `url`                  | direct PII              | URLs                                         |
+| `health`               | **Art. 9 sensitive**    | Diagnoses, medication, treatment, disability, sick leave, mental health |
+| `religion_ethnicity`   | **Art. 9 sensitive**    | Religious belief, philosophical conviction, ethnic origin, trade-union membership |
 
 The off-the-shelf GLiNER2-PII model is multilingual but generic. Swedish
 identifiers (`personnummer`, `organisationsnummer`, `bankgiro`) are
-underrepresented in its training set. We fix that with targeted synthetic
-data + light fine-tuning.
+underrepresented in its training set, and Art. 9 sensitive categories are
+not separately exposed at all. We fix both with targeted synthetic data +
+light fine-tuning. The sensitive labels are required for municipal use:
+IMY's Slutrapport IMY-2024-5156 (§4.3, §6.3) calls them out as the legal
+hinge for a masking service deployed by a kommun (social services, school,
+healthcare records).
 
 ---
 
@@ -50,13 +56,20 @@ pii-model/
 ├── PLAN.md              # this file
 ├── pyproject.toml       # uv-managed; gliner2[local] + data-designer
 ├── configs/
-│   └── ndd_swedish_pii.py          # ✅ NeMo Data Designer recipe (REAL)
+│   ├── ndd_swedish_pii.py          # ✅ NDD recipe driver — build_config() + re-exports
+│   └── _ndd/                       # ✅ internal recipe modules
+│       ├── labels.py               #     LABELS, LABEL_DESCRIPTIONS, pydantic output
+│       ├── seed_pools.py           #     names, streets, cities, sensitive pools
+│       ├── seed_generators.py      #     Luhn personnummer + decorated generators
+│       ├── validators.py           #     substring entities_validated check
+│       └── prompts.py              #     text-gen + judge prompts + rubrics
 ├── scripts/
 │   ├── 01_generate_synthetic.py    # ✅ NDD driver → data/raw/*.parquet
-│   ├── 02_to_gliner2_jsonl.py      # ✅ parquet → gliner2 InputExample jsonl
+│   ├── 02_to_gliner2_jsonl.py      # ✅ parquet → gliner2 InputExample jsonl + dataset_card.md
 │   ├── 03_train.py                 # ✅ GLiNER2Trainer wrapper (LoRA or full FT)
 │   ├── 04_evaluate.py              # 🔲 TODO — held-out + real-screenshot eval
-│   └── 05_export_onnx.py           # 🔲 TODO — checkpoint → ONNX (see ../TODO.md §2)
+│   ├── 05_export_onnx.py           # 🔲 TODO — checkpoint → ONNX (see ../TODO.md §2)
+│   └── run_hf_preview.py           # ✅ one-off — HF Qwen3.6 endpoint preview driver
 ├── data/
 │   ├── raw/                        # NDD output (gitignored)
 │   ├── train.jsonl                 # converted training set (gitignored)
@@ -87,23 +100,35 @@ categories above.
 
 NDD columns (sketch — full version in `configs/ndd_swedish_pii.py`):
 
-| column                  | type                | notes                                                        |
-|-------------------------|---------------------|--------------------------------------------------------------|
-| `text_type`             | `CategorySampler`   | `chat`, `support_ticket`, `invoice_line`, `email_body`, `form_screenshot`, `kontoutdrag`, `kvitto`, `id_kort_preview` — weighted to mirror real Ranymizer inputs |
-| `register`              | `CategorySampler`   | `formal`, `informal`, `bureaucratic`, `mobile_chat`          |
-| `seed_person`           | `PersonSampler`     | NDD's built-in; locale=`sv_SE`                               |
-| `seed_company`          | `LLMStructured`     | small JSON: `{name, org_nr (XXXXXX-XXXX), bg, pg}`           |
-| `seed_address`          | `LLMStructured`     | `{street, postnr (NNN NN), ort}`                             |
-| `seed_personnummer`     | `Expression`        | generated with valid Luhn check digit (helper fn)            |
-| `seed_pii_pool`         | `LLMStructured`     | grab-bag: `{email, phone, iban, date, url}`                  |
-| `text`                  | `LLMText`           | the actual training sentence — references seed values        |
-| `entities`              | `LLMStructured`     | `{label: [exact strings copied from `text`]}` — the labels   |
-| `entities_validated`    | `CustomColumn`      | substring-check every mention; drop rows with any miss       |
+| column                       | type                  | notes                                                        |
+|------------------------------|-----------------------|--------------------------------------------------------------|
+| `text_type`                  | `CategorySampler`     | support email, invoice line, kontoutdrag, customer ticket, kvitto, id-kort preview, doctor appointment + **vulnerable-population genres**: `socialtjänstanteckning`, `LSS-utredning`, `skolärende`, `biståndsbeslut`, `journalanteckning` |
+| `register`                   | `CategorySampler`     | `formal`, `informal`, `bureaucratic`, `mobile chat`          |
+| `text_layout`                | `CategorySampler`     | `prose` / `key_value` / `form_row` / `table_row` / `list` — gives the model OCR-realistic non-prose surfaces (Skatteverket forms, kontoutdrag tables, ID cards), not only paragraphs |
+| `seed_person`                | `Expression`          | `{first} {last}` from inline pools                           |
+| `seed_email`                 | `Expression`          | derived from `seed_person` via Jinja filter chain            |
+| `seed_phone`                 | `CustomColumn`        | mobile-dash / mobile-plus / landline format                  |
+| `seed_personnummer`          | `CustomColumn`        | generated with valid Luhn check digit                        |
+| `seed_company`               | `CustomColumn`        | `{name, org_nr, bankgiro}` pydantic model                    |
+| `seed_address`               | `CustomColumn`        | `{street_line, postnr, city, full}`                          |
+| `seed_date`, `seed_url`      | `CategorySampler`     | small fixed pools                                            |
+| `seed_health`                | `CategorySampler`     | Art. 9 clinical phrases (diagnoses, meds, sick-leave status) |
+| `seed_religion_ethnicity`    | `CategorySampler`     | Art. 9 belief / ethnic / union membership phrases            |
+| `generation`                 | `LLMStructured`       | one call returns `{text, entities}` honouring `text_layout`  |
+| `text`, `entities`           | `Expression`          | flattened from `generation` for downstream consumption       |
+| `entities_validated`         | `CustomColumn`        | substring-check every mention; drop rows with any miss       |
+| `pii_quality_judge_result`   | `LLMJudge`            | rubrics: `swedish_naturalness`, `seed_grounding`, `label_completeness` |
+| `*_score`                    | `Expression`          | flat per-rubric scores for downstream filtering              |
 
 The key trick: **we feed seeds (real PII values) to the LLM, then ask it
 to produce both the text AND the label dict in the same call.** That way
 mentions in `entities` are guaranteed to be substrings of `text` (and
-the validator drops any drift).
+the validator drops any drift). Sensitive seeds (`seed_health`,
+`seed_religion_ethnicity`) are gated as *optional* and only used by the
+LLM when the `text_type` naturally calls for them
+(`journalanteckning`, `biståndsbeslut`, etc.) — never to build "selection
+lists" of multiple people by sensitive attribute (forbidden by
+3 kap. 3 § andra stycket dataskyddslagen).
 
 ### 2.2 NDD prompt for `text` (excerpt)
 
