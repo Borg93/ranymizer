@@ -14,7 +14,7 @@ export function createGradioEngine(): AnonymizerEngine {
     meta: (): Promise<Record<string, CatMeta>> => fetchMeta(),
     async analyze(file: File, opts?: AnalyzeOptions): Promise<AnonymizeResult> {
       opts?.onProgress?.({ phase: 'analyzing' });
-      const result = await anonymizeScreenshot(file, opts?.config);
+      const result = await anonymizeScreenshot(file, opts?.config, opts?.onStage);
       opts?.onProgress?.({ phase: 'ready' });
       return result;
     },

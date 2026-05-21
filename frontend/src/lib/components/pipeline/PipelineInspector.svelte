@@ -5,7 +5,7 @@
  * right panel — nodes stay light, the inspector carries the noisy forms.
  */
 import * as v from 'valibot';
-import { Copy, FileJson, Plus, Settings2, Trash2, X } from 'lucide-svelte';
+import { Copy, FileJson, Plus, Settings2, Trash2, Upload, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { CustomLabelKeySchema } from '$lib/pipelineConfig.schema';
 import {
@@ -41,6 +41,51 @@ async function copyResponseJson(): Promise<void> {
   } catch {
     /* clipboard may be blocked in some browsers/contexts — ignore */
   }
+}
+
+// ── Image input node ───────────────────────────────────────────────
+// Drop-zone + file picker reuses `editor.uploadFiles`. Replace clears
+// the current set; Append adds to it (same flag the navbar uses).
+let inputDragging = $state(false);
+let appendMode = $state(true);
+
+function onInputDrop(event: DragEvent): void {
+  event.preventDefault();
+  inputDragging = false;
+  const files = event.dataTransfer?.files;
+  if (files && files.length) editor.uploadFiles(Array.from(files), { append: appendMode });
+}
+
+function onInputPick(event: Event): void {
+  const target = event.currentTarget as HTMLInputElement;
+  const files = target.files ? Array.from(target.files) : [];
+  if (files.length) editor.uploadFiles(files, { append: appendMode });
+  target.value = '';
+}
+
+/** Repaint a thumbnail when the underlying page snapshot moves. Same
+ *  pattern as Thumbnails.svelte — kept local because both components have
+ *  different sizing and we don't want one to drag the other's dependencies. */
+function paintThumbnail(canvas: HTMLCanvasElement, pageIdx: number): void {
+  $effect(() => {
+    void editor.activeIdx;
+    void editor.maskColor;
+    if (pageIdx === editor.activeIdx) {
+      void editor.boxes;
+    } else {
+      void editor.pages[pageIdx]?.boxes;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rendered = editor.renderThumbnailCanvas(pageIdx, 240);
+    if (!rendered) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    canvas.width = rendered.width;
+    canvas.height = rendered.height;
+    ctx.drawImage(rendered, 0, 0);
+  });
 }
 
 // Resizable — same drag handle UX as the editor's left text panel and right
@@ -248,6 +293,23 @@ const inputCls =
           {/each}
         </div>
       </div>
+
+      <!-- Last OCR output — text + line count from the most recent Run. -->
+      <details class="rounded border border-border" open={editor.sourceText.length > 0}>
+        <summary class="cursor-pointer list-none px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3 hover:text-foreground">
+          Last OCR output
+          <span class="ml-1 font-mono tabular-nums text-muted-foreground">
+            ({editor.sourceText.length} chars · {editor.ocrLines.length} lines)
+          </span>
+        </summary>
+        {#if editor.sourceText.length === 0}
+          <div class="border-t border-border px-2.5 py-2 text-[10.5px] text-muted-foreground">
+            Press Run to populate this.
+          </div>
+        {:else}
+          <pre class="m-0 max-h-48 overflow-auto border-t border-border bg-background/40 px-2.5 py-2 font-mono text-[10.5px] leading-snug text-foreground whitespace-pre-wrap">{editor.sourceText}</pre>
+        {/if}
+      </details>
     </div>
   {:else if selectedId === 'gliner'}
     <header class="border-b border-border px-4 py-3">
@@ -438,6 +500,140 @@ const inputCls =
           {/if}
         </div>
       </details>
+
+      <!-- Last detected spans from the most recent Run. -->
+      <details class="rounded border border-border" open={editor.spans.length > 0}>
+        <summary class="cursor-pointer list-none px-2.5 py-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3 hover:text-foreground">
+          Last spans
+          <span class="ml-1 font-mono tabular-nums text-muted-foreground">
+            ({editor.spans.length})
+          </span>
+        </summary>
+        {#if editor.spans.length === 0}
+          <div class="border-t border-border px-2.5 py-2 text-[10.5px] text-muted-foreground">
+            Press Run to populate this. Empty here = GLiNER2 returned no spans
+            for the current threshold + labels + post-filter combo.
+          </div>
+        {:else}
+          <ul class="max-h-64 divide-y divide-border overflow-auto border-t border-border">
+            {#each editor.spans as span, i (i)}
+              <li class="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2.5 py-1 text-[11px]">
+                <span class="rounded-sm bg-background/40 px-1 font-mono text-[10px] text-muted-foreground">
+                  {span.label}
+                </span>
+                <span class="truncate text-foreground" title={span.text}>{span.text}</span>
+                <span class="font-mono text-[10px] tabular-nums text-text3">
+                  {(span.confidence ?? 0).toFixed(2)}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </details>
+    </div>
+  {:else if selectedId === 'input'}
+    <header class="border-b border-border px-4 py-3">
+      <div class="text-[10.5px] font-medium uppercase tracking-[0.08em] text-text3">Input</div>
+      <div class="flex items-center gap-2">
+        <Upload class="h-4 w-4 text-primary" />
+        <div class="text-[13.5px] font-semibold text-foreground">Source images</div>
+      </div>
+      <p class="mt-1 text-[11px] text-muted-foreground">
+        Drop PNG / JPG / WebP / PDF here. PDFs are rasterised page-by-page. The carousel below shows everything currently loaded.
+      </p>
+    </header>
+
+    <div class="flex flex-1 flex-col gap-3 overflow-hidden p-3">
+      <!-- Append / Replace toggle. Same flag editor.uploadFiles() reads. -->
+      <div class="flex items-center justify-between rounded border border-border bg-background/40 px-2.5 py-1.5">
+        <span class="text-[11px] text-muted-foreground">On upload</span>
+        <div class="flex items-center gap-0.5 rounded-sm border border-border bg-card p-0.5">
+          <button
+            type="button"
+            class="rounded-sm px-2 py-0.5 text-[10.5px] text-muted-foreground transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
+            data-active={appendMode === true}
+            onclick={() => (appendMode = true)}
+          >
+            Append
+          </button>
+          <button
+            type="button"
+            class="rounded-sm px-2 py-0.5 text-[10.5px] text-muted-foreground transition-colors data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
+            data-active={appendMode === false}
+            onclick={() => (appendMode = false)}
+          >
+            Replace
+          </button>
+        </div>
+      </div>
+
+      <!-- Drop-zone — same UX as the canvas's empty-state dropzone. -->
+      <label
+        for="pipeline-input-file"
+        class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded border border-dashed bg-background/40 px-4 py-6 text-center transition-colors hover:border-primary/60 hover:bg-background/60"
+        class:border-primary={inputDragging}
+        class:bg-primary={false}
+        class:border-border={!inputDragging}
+        ondragover={(e) => {
+          e.preventDefault();
+          inputDragging = true;
+        }}
+        ondragleave={() => (inputDragging = false)}
+        ondrop={onInputDrop}
+      >
+        <Upload class="h-5 w-5 text-text3" />
+        <div class="text-[11.5px] font-medium text-foreground">Drop files here</div>
+        <div class="text-[10.5px] text-muted-foreground">or click to choose</div>
+        <input
+          id="pipeline-input-file"
+          type="file"
+          multiple
+          accept="image/*,application/pdf"
+          class="sr-only"
+          onchange={onInputPick}
+        />
+      </label>
+
+      <!-- Loaded pages carousel — click-to-go-to-page mirrors the bottom strip. -->
+      <div class="flex min-h-0 flex-1 flex-col rounded border border-border">
+        <div class="flex items-center justify-between border-b border-border px-2.5 py-1.5">
+          <span class="text-[10px] font-medium uppercase tracking-[0.08em] text-text3">
+            Loaded
+          </span>
+          <span class="font-mono text-[10.5px] tabular-nums text-muted-foreground">
+            {editor.pages.length}
+          </span>
+        </div>
+        {#if editor.pages.length === 0}
+          <div class="flex flex-1 items-center justify-center px-4 py-6 text-center text-[11px] text-muted-foreground">
+            No images uploaded yet.
+          </div>
+        {:else}
+          <div class="grid flex-1 grid-cols-2 gap-2 overflow-y-auto p-2">
+            {#each editor.pages as p, i (p.objectUrl)}
+              <button
+                type="button"
+                class="group relative aspect-square overflow-hidden rounded-md border bg-background transition-colors data-[active=true]:border-primary"
+                class:border-border={editor.activeIdx !== i}
+                data-active={editor.activeIdx === i}
+                onclick={() => editor.goTo(i)}
+                title={p.filename}
+              >
+                <canvas
+                  class="block h-full w-full object-cover"
+                  {@attach (node: HTMLCanvasElement) => paintThumbnail(node, i)}
+                  aria-label={p.filename}
+                ></canvas>
+                <span
+                  class="absolute bottom-0 left-0 right-0 truncate bg-background/85 px-1 py-px text-center font-mono text-[9.5px] text-muted-foreground"
+                >
+                  {i + 1} · {p.filename}
+                </span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
   {:else if selectedId === 'output'}
     <header class="border-b border-border px-4 py-3">

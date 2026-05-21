@@ -20,21 +20,67 @@ function getClient() {
   return clientPromise;
 }
 
-/** Upload + run OCR+PII pipeline. Returns the result or an object with `error`.
- *  `config` rides with the request so per-call settings (preprocessing toggles,
- *  GLiNER2 threshold + labels + per-label rules + custom labels) take effect
- *  server-side. Sending `undefined` keeps the legacy "use server defaults" path. */
+/**
+ * One streaming frame from the backend generator. Matches the `yield {...}`
+ * payloads in `backend/server.py::anonymize_screenshot_api`. Every frame
+ * carries the `stage`; the rest of the payload is partial up until `done`.
+ */
+export type AnonymizeStageEvent =
+  | { stage: 'ocr_started'; filename: string }
+  | {
+      stage: 'ocr_done';
+      filename: string;
+      width: number;
+      height: number;
+      text: string;
+      ocr_lines: AnonymizeResult['ocr_lines'];
+    }
+  | { stage: 'gliner_started' }
+  | ({ stage: 'done' } & AnonymizeResult);
+
+/** Upload + run OCR+PII pipeline as an SSE stream. The supplied `onStage`
+ *  callback fires for every yielded frame so the UI can paint OCR text
+ *  before GLiNER2 finishes and flip pipeline-graph indicators per stage.
+ *  Resolves with the final `done` payload (same shape as the legacy single
+ *  response). `config` is the request's PipelineConfig; `undefined` falls
+ *  back to server defaults. */
 export async function anonymizeScreenshot(
   file: File,
   config?: PipelineConfig,
+  onStage?: (event: AnonymizeStageEvent) => void,
 ): Promise<AnonymizeResult> {
   const client = await getClient();
-  const result = await client.predict('/anonymize_screenshot', {
+  const job = client.submit('/anonymize_screenshot', {
     image: handle_file(file),
     config: config ?? null,
   });
-  const data = (result.data as unknown[])[0] as AnonymizeResult | undefined;
-  return data ?? ({ error: 'no data returned' } as AnonymizeResult);
+
+  let last: AnonymizeResult | undefined;
+  try {
+    for await (const msg of job) {
+      // The Gradio JS client surfaces yielded frames as `{type:'data', data:[...]}`.
+      // We only care about `data` frames; ignore status/log frames.
+      if (msg.type !== 'data') continue;
+      const frame = (msg.data as unknown[])[0] as AnonymizeStageEvent | undefined;
+      if (!frame) continue;
+      onStage?.(frame);
+      if (frame.stage === 'done') {
+        // `done` carries the full AnonymizeResult — destructure off the
+        // discriminator and break out. The Gradio iterator can sit open
+        // after the last yield waiting for the queue's `process_completes`
+        // status; breaking + `job.cancel()` releases the SSE stream so the
+        // loading spinner actually clears.
+        const { stage: _stage, ...rest } = frame;
+        last = rest as AnonymizeResult;
+        break;
+      }
+    }
+  } finally {
+    job.cancel?.().catch(() => {
+      /* job already closed or never started — ignore */
+    });
+  }
+  return last ?? ({ error: 'no data returned' } as AnonymizeResult);
 }
 
 /**

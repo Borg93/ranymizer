@@ -6,10 +6,21 @@
  */
 import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 import { editor } from '$lib/state.svelte';
+import StageDot from './StageDot.svelte';
 
 let { selected }: NodeProps = $props();
 
 const cfg = $derived(editor.pipelineConfig.paddleocr);
+
+// Stage projection: PaddleOCR is "active" only during the `ocr` stage;
+// once GLiNER2 starts (or the run is done) it's complete.
+const stageStatus = $derived<'idle' | 'active' | 'done'>(
+  editor.pipelineStage === 'ocr'
+    ? 'active'
+    : editor.pipelineStage === 'gliner' || editor.pipelineStage === 'done'
+      ? 'done'
+      : 'idle',
+);
 const optCount = $derived(
   [
     cfg.useDocOrientationClassify,
@@ -31,7 +42,7 @@ const optCount = $derived(
   <Handle type="target" position={Position.Left} class="!h-2 !w-2 !bg-primary" />
 
   <div class="flex items-center gap-2 border-b border-border px-3 py-2">
-    <span class="h-2 w-2 rounded-full bg-primary"></span>
+    <StageDot status={stageStatus} />
     <div class="min-w-0 flex-1">
       <div class="text-[12px] font-semibold text-foreground">PaddleOCR</div>
       <div class="font-mono text-[10px] text-text3">det + rec</div>

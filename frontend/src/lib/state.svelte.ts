@@ -94,6 +94,11 @@ export class EditorState {
   loadingProgress = $state<{ done: number; total: number } | null>(null);
   error = $state<string | null>(null);
 
+  /** Current stage of the streaming backend pipeline. Drives the per-node
+   *  status dots in PipelineSketch and the stage-aware label in the canvas
+   *  overlay. `idle` whenever nothing is running. */
+  pipelineStage = $state<'idle' | 'ocr' | 'gliner' | 'done'>('idle');
+
   // ── pipeline config (persisted) ───────────────────────────────────
   pipelineConfig = $state<PipelineConfig>(loadPipelineConfig());
   settingsOpen = $state(false);
@@ -462,8 +467,9 @@ export class EditorState {
     if (this.pages.length === 0 || this.loading) return;
     const myId = ++this.#uploadId;
     this.loading = true;
-    this.loadingMessage = 'Re-running pipeline…';
+    this.loadingMessage = 'Running pipeline…';
     this.loadingProgress = { done: 0, total: this.pages.length };
+    this.pipelineStage = 'idle';
     this.error = null;
 
     const refreshed: Page[] = [];
@@ -472,10 +478,38 @@ export class EditorState {
       const existing = this.pages[i];
       const customBoxes = existing.boxes.filter((b) => b.custom);
       this.loadingProgress = { done: i, total: this.pages.length };
-      this.loadingMessage = `Re-running ${i + 1}/${this.pages.length}: ${existing.filename}`;
+      this.loadingMessage =
+        this.pages.length > 1
+          ? `Running ${i + 1}/${this.pages.length}: ${existing.filename}`
+          : `Running: ${existing.filename}`;
 
       try {
-        const result = await engine.analyze(existing.file, { config: this.pipelineConfig });
+        const result = await engine.analyze(existing.file, {
+          config: this.pipelineConfig,
+          // Per-stage SSE frames from the backend generator. Paint OCR
+          // results (text + word boxes) the moment PaddleOCR finishes so
+          // the text sidebar populates ~1s earlier than the legacy single
+          // response, and flip the pipeline-graph indicators between stages.
+          onStage: (event) => {
+            if (myId !== this.#uploadId) return;
+            if (event.stage === 'ocr_started') {
+              this.pipelineStage = 'ocr';
+            } else if (event.stage === 'ocr_done') {
+              // Push OCR text + word boxes onto the live page immediately.
+              // Spans/boxes stay empty until `done`.
+              if (i === this.activeIdx) {
+                this.sourceText = event.text ?? '';
+                this.ocrLines = event.ocr_lines ?? [];
+                this.width = event.width;
+                this.height = event.height;
+              }
+            } else if (event.stage === 'gliner_started') {
+              this.pipelineStage = 'gliner';
+            } else if (event.stage === 'done') {
+              this.pipelineStage = 'done';
+            }
+          },
+        });
         if (myId !== this.#uploadId) return;
         if (result.error) {
           console.error('re-run failed for', existing.filename, '—', result.error);
@@ -502,6 +536,7 @@ export class EditorState {
     this.loading = false;
     this.loadingProgress = null;
     this.loadingMessage = '';
+    this.pipelineStage = 'idle';
   }
 
   /** Persist the current pipelineConfig to localStorage. Call after edits. */
@@ -569,6 +604,19 @@ export class EditorState {
   }
   next() {
     this.goTo(this.activeIdx + 1);
+  }
+
+  /** Cancel an in-flight upload or pipeline run. Bumps `#uploadId` so the
+   *  loop's `myId !== this.#uploadId` check breaks out on the next yielded
+   *  SSE frame; any later frames from the still-running backend are
+   *  silently dropped. Resets the UI to idle. */
+  cancel(): void {
+    if (!this.loading) return;
+    this.#uploadId++;
+    this.loading = false;
+    this.loadingProgress = null;
+    this.loadingMessage = '';
+    this.pipelineStage = 'idle';
   }
 
   reset() {

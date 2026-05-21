@@ -9,6 +9,7 @@
 import { Play, RotateCcw, X } from 'lucide-svelte';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
+import { Spinner } from '$lib/components/ui/spinner';
 import PipelineSketch from './PipelineSketch.svelte';
 
 function close(): void {
@@ -47,19 +48,39 @@ function onKeyDown(event: KeyboardEvent): void {
         Click a node to expand its settings inline. Drag nodes, pan with empty space, scroll to zoom.
       </span>
       <span class="flex-1"></span>
-      <Button variant="ghost" size="sm" onclick={resetDefaults}>
+      <Button variant="ghost" size="sm" onclick={resetDefaults} disabled={editor.loading}>
         <RotateCcw class="mr-1 h-3.5 w-3.5" />
         Reset to defaults
       </Button>
-      <Button
-        variant="default"
-        size="sm"
-        disabled={!editor.hasImage || editor.loading}
-        onclick={applyAndRun}
-      >
-        <Play class="mr-1 h-3.5 w-3.5" />
-        Apply &amp; Run
-      </Button>
+      {#if editor.loading}
+        <!-- Live stage label + Cancel — the per-node StageDots show
+             *which* step is running, this strip says it's actually running
+             at all and offers the abort. -->
+        <span class="hidden items-center gap-1.5 font-mono text-[11px] text-muted-foreground md:inline-flex">
+          <Spinner />
+          {#if editor.pipelineStage === 'ocr'}
+            Running OCR…
+          {:else if editor.pipelineStage === 'gliner'}
+            Extracting entities…
+          {:else}
+            Running…
+          {/if}
+        </span>
+        <Button variant="destructive" size="sm" onclick={() => editor.cancel()}>
+          <X class="mr-1 h-3.5 w-3.5" />
+          Cancel
+        </Button>
+      {:else}
+        <Button
+          variant="default"
+          size="sm"
+          disabled={!editor.hasImage}
+          onclick={applyAndRun}
+        >
+          <Play class="mr-1 h-3.5 w-3.5" />
+          Apply &amp; Run
+        </Button>
+      {/if}
       <Button
         variant="ghost"
         size="sm"

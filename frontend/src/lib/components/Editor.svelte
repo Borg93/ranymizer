@@ -7,9 +7,10 @@ import {
   Rows3,
   FilePlus2,
   Play,
-  Settings2,
   Undo2,
   Redo2,
+  Workflow,
+  X,
 } from 'lucide-svelte';
 import { zipSync } from 'fflate';
 import { toast } from 'svelte-sonner';
@@ -347,30 +348,52 @@ function onKeyDown(e: KeyboardEvent) {
         <Redo2 />
       </Button>
 
-      <Button
-        variant="default"
-        size="sm"
-        disabled={!editor.hasImage || editor.loading}
-        onclick={() => editor.run()}
-        title="Run the pipeline on all pages with the current settings"
-      >
-        {#if editor.loading}
-          <Spinner />
-          Running…
-        {:else}
+      {#if editor.loading}
+        <!-- During a run, the Run slot becomes Cancel — single primary
+             button, click to abort. Stage label sits next to it so the
+             user knows *what* is running. -->
+        <Button
+          variant="destructive"
+          size="sm"
+          onclick={() => editor.cancel()}
+          title="Cancel the running pipeline"
+        >
+          <X />
+          Cancel
+        </Button>
+        <span class="hidden font-mono text-[11px] text-muted-foreground sm:inline">
+          {#if editor.pipelineStage === 'ocr'}
+            Running OCR…
+          {:else if editor.pipelineStage === 'gliner'}
+            Extracting…
+          {:else}
+            Running…
+          {/if}
+        </span>
+      {:else}
+        <Button
+          variant="default"
+          size="sm"
+          disabled={!editor.hasImage}
+          onclick={() => editor.run()}
+          title="Run the pipeline on all pages with the current settings"
+        >
           <Play />
           Run
-        {/if}
-      </Button>
+        </Button>
+      {/if}
 
+      <!-- Pipeline-settings entry — outline + label so it actually reads
+           as "go configure the pipeline" instead of a generic gear. -->
       <Button
-        variant="ghost"
-        size="icon-sm"
+        variant="outline"
+        size="sm"
         onclick={() => (editor.settingsOpen = !editor.settingsOpen)}
         aria-label="Pipeline settings"
-        title="Pipeline settings"
+        title="Customise the pipeline (OCR + entity extraction)"
       >
-        <Settings2 />
+        <Workflow />
+        Pipeline
       </Button>
 
       <Button

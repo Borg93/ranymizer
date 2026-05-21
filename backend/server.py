@@ -16,6 +16,7 @@ Routes:
 from __future__ import annotations
 
 import traceback
+from collections.abc import Iterator
 from pathlib import Path
 
 import gradio as gr
@@ -72,21 +73,33 @@ def _ocr_line_to_debug_overlay(line: dict) -> dict:
     return {"text": line["text"], "x": line["x"], "y": line["y"], "w": line["w"], "h": line["h"]}
 
 
-@server.api(name="anonymize_screenshot")
-def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> dict:
-    """OCR + PII over an uploaded image. JSON-only response.
+@server.api(name="anonymize_screenshot", stream_every=0.05)
+def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> Iterator[dict]:
+    """OCR + PII over an uploaded image. **Streaming** generator — yields a
+    sequence of partial dicts so the client can paint OCR text/lines as soon
+    as PaddleOCR finishes and update the pipeline graph between stages.
 
-    `config` is the frontend's `pipelineConfig` payload (see schema.py).
-    Missing fields fall back to env-driven defaults — so existing clients
-    that don't send a config keep working unchanged.
+    Wire shape (each yield is one SSE frame):
+
+      {"stage": "ocr_started", "filename": ...}
+      {"stage": "ocr_done",    "filename","width","height","text","ocr_lines"}
+      {"stage": "gliner_started"}
+      {"stage": "done", ...full AnonymizeResult...}
+
+    Final `done` frame carries the complete payload so any legacy caller that
+    only reads the last frame stays compatible.
     """
     try:
         path = image.get("path") or image.get("url") or ""
         if not path:
-            return {"error": "expected an image file"}
+            yield {"stage": "done", "error": "expected an image file"}
+            return
 
         cfg = parse_config(config)
         pil_image = Image.open(path).convert("RGB")
+        filename = Path(path).name
+
+        yield {"stage": "ocr_started", "filename": filename}
 
         # OCR with optional preprocessing overrides.
         ocr = ocr_image(
@@ -96,9 +109,24 @@ def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> dic
             use_textline_orientation=cfg.paddleocr.useTextlineOrientation,
         )
 
+        ocr_lines = [_ocr_line_to_debug_overlay(line) for line in ocr["words"]]
+
+        # Surface OCR results immediately so the text sidebar populates while
+        # GLiNER2 is still warming up.
+        yield {
+            "stage": "ocr_done",
+            "filename": filename,
+            "width": pil_image.width,
+            "height": pil_image.height,
+            "text": ocr["text"],
+            "ocr_lines": ocr_lines,
+        }
+
         spans: list = []
         boxes: list = []
         if ocr["text"].strip():
+            yield {"stage": "gliner_started"}
+
             # Build the labels dict GLiNER2 conditions on. Defaults + custom
             # labels (merged), filtered by `enabledLabels` if the client sent
             # an explicit selection.
@@ -131,18 +159,19 @@ def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> dic
                 spans = [s for s in spans if s["end"] <= len(ocr["text"])]
             boxes = map_spans_to_boxes(ocr["words"], spans)
 
-        return {
-            "filename": Path(path).name,
+        yield {
+            "stage": "done",
+            "filename": filename,
             "width": pil_image.width,
             "height": pil_image.height,
             "boxes": boxes,
             "text": ocr["text"],
             "spans": spans,
-            "ocr_lines": [_ocr_line_to_debug_overlay(line) for line in ocr["words"]],
+            "ocr_lines": ocr_lines,
         }
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
-        return {"error": f"{type(exc).__name__}: {exc}"}
+        yield {"stage": "done", "error": f"{type(exc).__name__}: {exc}"}
 
 
 # adapter-static emits build/index.html (SPA fallback) + build/_app/<chunks>.

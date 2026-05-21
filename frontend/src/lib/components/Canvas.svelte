@@ -1,5 +1,5 @@
 <script lang="ts">
-import { Maximize2, Upload, ZoomIn, ZoomOut } from 'lucide-svelte';
+import { Maximize2, Upload, X, ZoomIn, ZoomOut } from 'lucide-svelte';
 import { Progress } from '$lib/components/ui/progress';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -359,12 +359,18 @@ const cursorClass = $derived.by(() => {
          button already shows one for the transient feedback; this
          space is dedicated to the determinate progress bar. -->
     <div
-      class="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/55 backdrop-blur-[2px]"
+      class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/55 backdrop-blur-[2px]"
     >
-      <span class="font-mono text-[11px] tracking-wide text-muted-foreground">
-        {editor.loadingMessage || 'running pipeline…'}
+      <span class="pointer-events-none font-mono text-[11px] tracking-wide text-muted-foreground">
+        {#if editor.pipelineStage === 'ocr'}
+          Running OCR…
+        {:else if editor.pipelineStage === 'gliner'}
+          Extracting entities…
+        {:else}
+          {editor.loadingMessage || 'running pipeline…'}
+        {/if}
       </span>
-      <div class="w-56">
+      <div class="pointer-events-none w-56">
         <Progress
           value={editor.loadingProgress?.done ?? 0}
           max={Math.max(1, editor.loadingProgress?.total ?? 1)}
@@ -375,6 +381,10 @@ const cursorClass = $derived.by(() => {
           </div>
         {/if}
       </div>
+      <Button variant="outline" size="sm" onclick={() => editor.cancel()}>
+        <X />
+        Cancel
+      </Button>
     </div>
   {/if}
 

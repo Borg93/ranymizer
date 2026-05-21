@@ -20,6 +20,7 @@ import PaddleNode from './pipeline/PaddleNode.svelte';
 import GlinerNode from './pipeline/GlinerNode.svelte';
 import IoNode from './pipeline/IoNode.svelte';
 import PipelineInspector from './pipeline/PipelineInspector.svelte';
+import { editor } from '$lib/state.svelte';
 
 // SvelteFlow's NodeTypes index signature is a *general* Node<unknown,…>
 // component; IoNode narrows its data type. Cast is the documented escape
@@ -103,6 +104,19 @@ let edges = $state<Edge[]>([
     style: 'stroke: var(--text3);',
   },
 ]);
+
+// Drive the "dashes flow" animation on each edge from the live pipeline
+// stage. Edge i is animated while its source node is producing.
+$effect(() => {
+  const stage = editor.pipelineStage;
+  const animate = (id: string, on: boolean) => {
+    const e = edges.find((edge) => edge.id === id);
+    if (e && e.animated !== on) e.animated = on;
+  };
+  animate('in-paddle', stage === 'ocr');
+  animate('paddle-gliner', stage === 'gliner');
+  animate('gliner-out', stage === 'done');
+});
 </script>
 
 <div class="flex h-full w-full overflow-hidden bg-background/40">

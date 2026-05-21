@@ -8,10 +8,21 @@
 import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 import { editor } from '$lib/state.svelte';
 import { DEFAULT_LABEL_RULES, EMPTY_LABEL_RULE } from '$lib/types';
+import StageDot from './StageDot.svelte';
 
 let { selected }: NodeProps = $props();
 
 const cfg = $derived(editor.pipelineConfig.gliner);
+
+// Stage projection: GLiNER2 is "active" during the `gliner` stage, "done"
+// when the run finishes, "idle" otherwise (including during OCR).
+const stageStatus = $derived<'idle' | 'active' | 'done'>(
+  editor.pipelineStage === 'gliner'
+    ? 'active'
+    : editor.pipelineStage === 'done'
+      ? 'done'
+      : 'idle',
+);
 const customCount = $derived(Object.keys(cfg.customLabels).length);
 const ruleCount = $derived(
   Object.entries(cfg.rules).filter(([key, r]) => {
@@ -35,7 +46,7 @@ const ruleCount = $derived(
   <Handle type="target" position={Position.Left} class="!h-2 !w-2 !bg-primary" />
 
   <div class="flex items-center gap-2 border-b border-border px-3 py-2">
-    <span class="h-2 w-2 rounded-full bg-primary"></span>
+    <StageDot status={stageStatus} />
     <div class="min-w-0 flex-1">
       <div class="text-[12px] font-semibold text-foreground">GLiNER2</div>
       <div class="font-mono text-[10px] text-text3 truncate" title={cfg.modelName}>
