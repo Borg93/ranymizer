@@ -215,6 +215,11 @@ def build_config(model_alias: str = "openai-text") -> dd.DataDesignerConfigBuild
             system_prompt=TEXT_GEN_SYSTEM_PROMPT,
             prompt=TEXT_GEN_PROMPT,
             output_format=TextWithEntities,
+            # Reasoning models (Qwen3.6 MTP, DeepSeek R1, gpt-oss) emit a
+            # chain-of-thought block alongside the final JSON. Pulling it
+            # into a separate column keeps NDD from mistaking it for the
+            # structured response.
+            extract_reasoning_content=True,
         )
     )
 
@@ -246,6 +251,7 @@ def build_config(model_alias: str = "openai-text") -> dd.DataDesignerConfigBuild
             system_prompt=PII_JUDGE_SYSTEM_PROMPT,
             prompt=PII_JUDGE_PROMPT,
             scores=PII_JUDGE_SCORES,
+            extract_reasoning_content=True,
         )
     )
 

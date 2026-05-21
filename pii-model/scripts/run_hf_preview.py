@@ -47,6 +47,11 @@ def main() -> None:
     config = build_config(model_alias=MODEL_ALIAS)
 
     # 2. Register the HF-hosted model under that alias.
+    # Qwen3.6 MTP is a reasoning model — most of its first hundreds of tokens
+    # go into `reasoning_content`, not the final JSON. With max_tokens<2k the
+    # model truncates BEFORE emitting structured content and NDD sees empty
+    # output. 8k gives it room for both the chain-of-thought and the
+    # multi-field structured response.
     config.add_model_config(
         dd.ModelConfig(
             alias=MODEL_ALIAS,
@@ -55,8 +60,8 @@ def main() -> None:
             skip_health_check=True,
             inference_parameters=dd.ChatCompletionInferenceParams(
                 temperature=0.7,
-                max_tokens=1024,
-                timeout=120,
+                max_tokens=8192,
+                timeout=300,
                 max_parallel_requests=4,
             ),
         )
