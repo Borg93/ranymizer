@@ -130,6 +130,14 @@ export class EditorState {
   maskAlpha = $state(0.6);
   // Solid mask color used in the unified preview and always for the export PNG.
   maskColor = $state('#000000');
+  // Integrated box border for the mask preview: every visible box gets a solid
+  // border in its own fill/category colour on top of the translucent fill, so
+  // the box + mask read as one styled unit. Width is on-screen px (constant
+  // across zoom); 0 = no border. Preview only — never applied to the export PNG.
+  maskBorderWidth = $state(1.5);
+  // OCR detection-line overlay style (preview only).
+  ocrLineColor = $state('#38bdf8');
+  ocrLineWidth = $state(1);
   // Default category for the next drawn box.
   drawLabel = $state('custom');
   // Thumbnail carousel visibility — only matters when there are >1 pages.
@@ -232,7 +240,10 @@ export class EditorState {
   catCounts = $derived.by(() => {
     const counts: Record<string, number> = {};
     for (const b of this.boxes) {
-      if (b.custom) continue;
+      // A box's category is its label, whether it was predicted or drawn by
+      // hand. Only the generic 'custom' pseudo-label (an unlabelled drawn box)
+      // is left out of the category list — it has no real category to filter.
+      if (b.label === 'custom') continue;
       counts[b.label] = (counts[b.label] ?? 0) + 1;
     }
     return counts;
@@ -310,7 +321,10 @@ export class EditorState {
   // ── helpers ───────────────────────────────────────────────────────
   isVisible(b: EditorBox): boolean {
     if (!b.enabled) return false;
-    if (!b.custom && !this.activeCats.has(b.label)) return false;
+    // Any box with a real category obeys the category filter — predicted or
+    // hand-drawn alike. Unlabelled 'custom' boxes have no category row, so
+    // they always show (when enabled).
+    if (b.label !== 'custom' && !this.activeCats.has(b.label)) return false;
     return true;
   }
 
@@ -530,7 +544,11 @@ export class EditorState {
     this.pages = refreshed;
     this.activeCats.clear();
     for (const page of refreshed) {
-      for (const b of page.boxes) if (!b.custom) this.activeCats.add(b.label);
+      // Activate every real category present — including those carried by
+      // preserved hand-drawn boxes — so they survive the re-run visible and
+      // listed (a drawn box labelled e.g. PHONE with no prediction otherwise
+      // drops out of activeCats and gets hidden).
+      for (const b of page.boxes) if (b.label !== 'custom') this.activeCats.add(b.label);
     }
     this.#loadActivePage();
     this.loading = false;
@@ -871,6 +889,26 @@ export class EditorState {
     b.y = Math.max(0, Math.min(this.height - b.h, Math.round(y)));
     // Custom boxes follow their captured OCR text as they're moved around.
     // PII-derived boxes keep their original span text.
+    if (b.custom) b.text = this.textInBox(b.x, b.y, b.w, b.h);
+  }
+
+  /** Smallest box edge (image px) allowed when dragging an anchor handle. */
+  static readonly MIN_BOX = 4;
+
+  /**
+   * Resize a box to an explicit rect — used by the canvas anchor handles.
+   * The caller (Canvas) clamps to the image bounds and enforces MIN_BOX, so
+   * this just commits the new geometry. Wrap one interactive resize in a
+   * single undo step by calling `beginMove()` once on handle mousedown.
+   */
+  resizeBox(id: number, rect: { x: number; y: number; w: number; h: number }) {
+    const b = this.boxes.find((b) => b.id === id);
+    if (!b) return;
+    b.x = rect.x;
+    b.y = rect.y;
+    b.w = rect.w;
+    b.h = rect.h;
+    // Re-capture underlying OCR text for custom boxes as their bounds change.
     if (b.custom) b.text = this.textInBox(b.x, b.y, b.w, b.h);
   }
 

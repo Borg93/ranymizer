@@ -4,7 +4,55 @@ import { Progress } from '$lib/components/ui/progress';
 import { editor } from '$lib/state.svelte';
 import { Button } from '$lib/components/ui/button';
 import { Separator } from '$lib/components/ui/separator';
-import type { EditorBox } from '$lib/types';
+import type { EditorBox, ResizeHandle } from '$lib/types';
+
+// Anchor-handle geometry. Sizes are in *screen* px and divided by the zoom
+// scale at use-sites so handles stay a constant size on screen.
+const HANDLE_HALF = 4; // half the drawn handle square
+const HANDLE_HIT = 7; // pointer tolerance around a handle centre
+
+/** Centre points (image coords) of the 8 resize handles for a box. */
+function handlePoints(b: { x: number; y: number; w: number; h: number }): Array<{
+  id: ResizeHandle;
+  x: number;
+  y: number;
+}> {
+  const { x, y, w, h } = b;
+  const mx = x + w / 2;
+  const my = y + h / 2;
+  return [
+    { id: 'nw', x, y },
+    { id: 'n', x: mx, y },
+    { id: 'ne', x: x + w, y },
+    { id: 'e', x: x + w, y: my },
+    { id: 'se', x: x + w, y: y + h },
+    { id: 's', x: mx, y: y + h },
+    { id: 'sw', x, y: y + h },
+    { id: 'w', x, y: my },
+  ];
+}
+
+/** Which handle of the current single selection is under (x, y), or null. */
+function handleHitTest(x: number, y: number): ResizeHandle | null {
+  const b = editor.selectedBox;
+  if (!b || editor.mode !== 'select') return null;
+  const tol = HANDLE_HIT / editor.scale;
+  for (const p of handlePoints(b)) {
+    if (Math.abs(x - p.x) <= tol && Math.abs(y - p.y) <= tol) return p.id;
+  }
+  return null;
+}
+
+const HANDLE_CURSORS: Record<ResizeHandle, string> = {
+  nw: 'cursor-nwse-resize',
+  se: 'cursor-nwse-resize',
+  ne: 'cursor-nesw-resize',
+  sw: 'cursor-nesw-resize',
+  n: 'cursor-ns-resize',
+  s: 'cursor-ns-resize',
+  e: 'cursor-ew-resize',
+  w: 'cursor-ew-resize',
+};
 
 // Imperative ref, read by the pointer handlers. Elements are never proxied.
 let wrapEl = $state<HTMLDivElement>();
@@ -74,8 +122,8 @@ function paint(node: Element) {
     // so the black bars cleanly cover the lines they pass through.
     if (editor.showOcrLines && editor.ocrLines.length > 0) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-      ctx.lineWidth = Math.max(1, 1 / editor.scale);
+      ctx.strokeStyle = editor.ocrLineColor;
+      ctx.lineWidth = Math.max(0.25, editor.ocrLineWidth / editor.scale);
       for (const ln of editor.ocrLines) {
         ctx.strokeRect(ln.x + 0.5, ln.y + 0.5, ln.w, ln.h);
       }
@@ -84,18 +132,27 @@ function paint(node: Element) {
 
     if (editor.showCategoryColors && editor.colorMaskMode !== 'hide') {
       // Preview — translucent fill so the underlying image stays partly
-      // visible. Either per-category colour or a unified swatch colour.
+      // visible, plus an integrated solid border of the same colour so the
+      // box + mask read as one unit. Either per-category or unified colour.
       ctx.save();
-      ctx.globalAlpha = editor.maskAlpha;
       const usePerCategory = editor.colorMaskMode === 'per-category';
+      const bw = Math.max(0, editor.maskBorderWidth / editor.scale);
       for (const b of editor.boxes) {
         if (!editor.isVisible(b)) continue;
-        if (usePerCategory) {
-          ctx.fillStyle = b.custom ? '#9ca3af' : (editor.catMeta[b.label]?.color ?? '#9ca3af');
-        } else {
-          ctx.fillStyle = editor.maskColor;
-        }
+        // Colour by category (label) or the unified swatch. Unlabelled
+        // 'custom' boxes have no catMeta entry and fall back to neutral grey.
+        const color = usePerCategory
+          ? (editor.catMeta[b.label]?.color ?? '#9ca3af')
+          : editor.maskColor;
+        ctx.globalAlpha = editor.maskAlpha;
+        ctx.fillStyle = color;
         ctx.fillRect(b.x, b.y, b.w, b.h);
+        if (bw > 0) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = bw;
+          ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w, b.h);
+        }
       }
       ctx.restore();
     } else if (editor.showCategoryColors && editor.colorMaskMode === 'hide') {
@@ -141,6 +198,22 @@ function paint(node: Element) {
       for (const b of editor.boxes) {
         if (!editor.selectedIds.has(b.id)) continue;
         ctx.strokeRect(b.x, b.y, b.w, b.h);
+      }
+      ctx.restore();
+    }
+
+    // Anchor handles — drawn for a single selection in select mode so the
+    // user can drag a corner/edge to reshape the box afterwards.
+    if (editor.selectedBox && editor.mode === 'select' && !editor.drag) {
+      const hs = HANDLE_HALF / editor.scale;
+      const primary = cssVar('--primary') || '#818cf8';
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = primary;
+      ctx.lineWidth = Math.max(1, 1 / editor.scale);
+      for (const p of handlePoints(editor.selectedBox)) {
+        ctx.fillRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
+        ctx.strokeRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
       }
       ctx.restore();
     }
@@ -209,6 +282,24 @@ function onMouseDown(ev: MouseEvent) {
   if (ev.button !== 0) return;
   ev.preventDefault();
   const { x, y } = canvasXY(ev);
+
+  // Anchor handles sit on top of (and slightly outside) the box, so test
+  // them before the move/draw hit-test — dragging a handle reshapes the box.
+  const handle = handleHitTest(x, y);
+  if (handle && editor.selectedBox) {
+    const b = editor.selectedBox;
+    editor.beginMove();
+    editor.drag = {
+      type: 'resize',
+      handle,
+      startX: x,
+      startY: y,
+      origBox: { x: b.x, y: b.y, w: b.w, h: b.h },
+      boxId: b.id,
+    };
+    return;
+  }
+
   const hit = hitTest(x, y);
 
   if (editor.mode === 'draw' && !hit) {
@@ -277,6 +368,31 @@ function onMouseMove(ev: MouseEvent) {
     const dy = y - editor.drag.startY;
     const o = editor.drag.origBox;
     editor.moveBox(editor.drag.boxId, o.x + dx, o.y + dy);
+  } else if (editor.drag.type === 'resize') {
+    const o = editor.drag.origBox;
+    const h = editor.drag.handle;
+    const MIN = 4;
+    // Start from the original edges, then move only the edges this handle
+    // controls. Opposite edges stay put, so anchoring is intuitive.
+    let x1 = o.x;
+    let y1 = o.y;
+    let x2 = o.x + o.w;
+    let y2 = o.y + o.h;
+    if (h.includes('w')) x1 = Math.min(x, x2 - MIN);
+    if (h.includes('e')) x2 = Math.max(x, x1 + MIN);
+    if (h.includes('n')) y1 = Math.min(y, y2 - MIN);
+    if (h.includes('s')) y2 = Math.max(y, y1 + MIN);
+    // Clamp to the image so a box can't be dragged off-canvas.
+    x1 = Math.max(0, x1);
+    y1 = Math.max(0, y1);
+    x2 = Math.min(editor.width, x2);
+    y2 = Math.min(editor.height, y2);
+    editor.resizeBox(editor.drag.boxId, {
+      x: Math.round(x1),
+      y: Math.round(y1),
+      w: Math.round(x2 - x1),
+      h: Math.round(y2 - y1),
+    });
   }
 }
 
@@ -320,6 +436,12 @@ const overBox = $derived.by(() => {
   return hitTest(editor.cursor.x, editor.cursor.y) !== null;
 });
 
+// Which anchor handle the cursor is hovering (drives the resize cursor).
+const hoverHandle = $derived.by<ResizeHandle | null>(() => {
+  if (editor.mode !== 'select' || !editor.cursor) return null;
+  return handleHitTest(editor.cursor.x, editor.cursor.y);
+});
+
 // Empty-state dropzone (shown only when no pages have been uploaded yet).
 let dropzoneDragging = $state(false);
 function onDropzoneDrop(event: DragEvent) {
@@ -338,8 +460,10 @@ function onDropzoneFiles(event: Event) {
 const cursorClass = $derived.by(() => {
   if (panState) return 'cursor-grabbing';
   if (spaceDown) return 'cursor-grab';
+  if (editor.drag?.type === 'resize') return HANDLE_CURSORS[editor.drag.handle];
   if (editor.mode === 'draw') return 'cursor-crosshair';
   if (editor.drag?.type === 'move') return 'cursor-grabbing';
+  if (hoverHandle) return HANDLE_CURSORS[hoverHandle];
   if (overBox) return 'cursor-move';
   return 'cursor-default';
 });

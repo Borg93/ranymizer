@@ -288,10 +288,21 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
   },
 };
 
+/** One of the 8 anchor handles on a selected box: 4 corners + 4 edge mids. */
+export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
 export type DragState =
   | { type: 'draw'; startX: number; startY: number; newBox: Box }
   | {
       type: 'move';
+      startX: number;
+      startY: number;
+      origBox: { x: number; y: number; w: number; h: number };
+      boxId: number;
+    }
+  | {
+      type: 'resize';
+      handle: ResizeHandle;
       startX: number;
       startY: number;
       origBox: { x: number; y: number; w: number; h: number };

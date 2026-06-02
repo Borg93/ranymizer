@@ -29,7 +29,7 @@ let width = $state(272);
 const summary = $derived.by(() => {
   const visible = editor.visibleBoxes;
   const cats = new Set<string>();
-  for (const b of visible) cats.add(b.custom ? 'custom' : b.label);
+  for (const b of visible) cats.add(b.label);
   return { bars: visible.length, cats: cats.size };
 });
 
@@ -38,8 +38,7 @@ const distribution = $derived.by(() => {
   if (!visible.length) return [] as Array<{ key: string; pct: number; color: string }>;
   const counts: Record<string, number> = {};
   for (const b of visible) {
-    const k = b.custom ? 'custom' : b.label;
-    counts[k] = (counts[k] ?? 0) + 1;
+    counts[b.label] = (counts[b.label] ?? 0) + 1;
   }
   const total = visible.length;
   return Object.entries(counts).map(([k, n]) => ({
@@ -175,12 +174,43 @@ const categoryRows = $derived(
       <Badge variant="secondary" class="font-mono text-[10.5px]">{editor.ocrLines.length}</Badge>
     </button>
 
+    {#if editor.showOcrLines}
+      <label class="mt-1.5 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+        <span class="w-12 shrink-0">Color</span>
+        <input
+          type="color"
+          bind:value={editor.ocrLineColor}
+          class="h-6 w-9 cursor-pointer rounded border border-border bg-transparent p-0.5"
+          aria-label="OCR line color"
+          title="Colour of the OCR detection-line overlay"
+        />
+        <span class="flex-1 font-mono text-[10.5px] uppercase tabular-nums text-foreground">
+          {editor.ocrLineColor}
+        </span>
+      </label>
+      <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+        <span class="w-12 shrink-0">Width</span>
+        <input
+          type="range"
+          min="0.5"
+          max="6"
+          step="0.5"
+          bind:value={editor.ocrLineWidth}
+          class="flex-1 accent-primary"
+          aria-label="OCR line thickness"
+        />
+        <span class="w-8 text-right font-mono tabular-nums text-foreground">
+          {editor.ocrLineWidth}px
+        </span>
+      </label>
+    {/if}
+
     <button
       type="button"
       class="mt-1.5 flex w-full items-center gap-2 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-left transition-colors hover:bg-surface2 data-[active=true]:border-primary data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
       data-active={editor.showCategoryColors}
       onclick={() => (editor.showCategoryColors = !editor.showCategoryColors)}
-      title="Preview-only — exports always use solid bars"
+      title="Preview-only — fill + matching border. Exports always use solid bars."
     >
       <Palette class="h-3.5 w-3.5" />
       <span class="flex-1 text-[12.5px] font-medium tracking-tight">Color masks</span>
@@ -229,6 +259,21 @@ const categoryRows = $derived(
           />
           <span class="w-8 text-right font-mono tabular-nums text-foreground">
             {Math.round(editor.maskAlpha * 100)}%
+          </span>
+        </label>
+        <label class="mt-2 flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
+          <span class="w-12 shrink-0">Border</span>
+          <input
+            type="range"
+            min="0"
+            max="6"
+            step="0.5"
+            bind:value={editor.maskBorderWidth}
+            class="flex-1 accent-primary"
+            aria-label="Box border thickness"
+          />
+          <span class="w-8 text-right font-mono tabular-nums text-foreground">
+            {editor.maskBorderWidth}px
           </span>
         </label>
       {:else}
