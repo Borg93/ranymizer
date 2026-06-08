@@ -1,0 +1,18 @@
+[project]
+name = "ranymizer-evaluation"
+version = "0.1.0"
+description = "DeepEval LLM-as-judge data-quality evaluation for the Ranymizer Swedish-PII synthetic recipe."
+requires-python = ">=3.11"
+dependencies = [
+    "ranymizer-pii-core",
+    "deepeval>=4.0.5",
+    "openai",
+    "pandas",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.11,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+ranymizer-pii-core = { workspace = true }
