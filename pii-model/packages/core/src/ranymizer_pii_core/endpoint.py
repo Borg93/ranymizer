@@ -26,4 +26,14 @@ class ModelEndpoint(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1536, gt=0)
     timeout: int = Field(default=300, gt=0)
-    max_parallel_requests: int = Field(default=8, ge=1)
+    max_parallel_requests: int = Field(
+        default=32,
+        ge=1,
+        description=(
+            "Client-side concurrency ceiling (in-flight requests). Measured on "
+            "the local 3xBlackwell vLLM, throughput scales near-linearly to ~48 "
+            "and keeps climbing to ~96 with diminishing returns; 32 is a "
+            "balanced default for a shared server. The vLLM server's "
+            "--max-num-seqs must also allow this many concurrent sequences."
+        ),
+    )

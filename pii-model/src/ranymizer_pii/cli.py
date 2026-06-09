@@ -37,6 +37,14 @@ def generate(
     faker_seed: int | None = typer.Option(
         None, help="Seed Faker for reproducible PII seeds."
     ),
+    concurrency: int | None = typer.Option(
+        None,
+        "--concurrency",
+        min=1,
+        help="In-flight LLM requests (overrides the endpoint default of 32). "
+        "Throughput scales to ~48-96 on the local vLLM; the server's "
+        "--max-num-seqs must allow at least this many.",
+    ),
     config_file: Path | None = typer.Option(
         None,
         "--config",
@@ -70,6 +78,8 @@ def generate(
     else:
         config = SynthesisConfig(faker_seed=faker_seed)
     endpoint = settings.endpoint(base_url=base_url, model=model)
+    if concurrency is not None:
+        endpoint = endpoint.model_copy(update={"max_parallel_requests": concurrency})
     if preview:
         result = run_preview(config, endpoint, num_records=num, artifact_path=out)
         dataset = result.dataset

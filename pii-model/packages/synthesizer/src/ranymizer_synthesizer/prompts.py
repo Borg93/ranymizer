@@ -7,6 +7,15 @@ Two prompt families:
                   writes both the Swedish fragment and the entities dict.
     PII_JUDGE_* — drives `LLMJudgeColumnConfig("pii_quality_judge_result")`
                   for downstream filtering.
+
+Prompt ORDERING is load-bearing. Both user prompts put their large CONSTANT
+reference block (labels, layout catalog, output shape, hard rules) FIRST with no
+Jinja variables, then the per-row variables (text_type/register/layout + seeds)
+in a TASK/data footer at the very end. The constant head renders byte-identically
+on every row, so the vLLM server prefix-caches it once instead of re-prefilling
+~1.5k tokens per request — measured to be the dominant cost of a 200k-row run.
+Do NOT interleave `{{ variables }}` into the constant head, or the cache breaks
+at the first one and the saving is lost.
 """
 
 from __future__ import annotations
@@ -28,81 +37,19 @@ individual at a time.
 """
 
 
-# Layout switch — gives the model OCR-realistic non-prose surfaces (form rows,
-# table cells, key:value lines) instead of only flowing sentences. Critical
-# because real ranymizer inputs are screenshots of Skatteverket forms,
-# kontoutdrag tables, and ID cards — not paragraphs.
 TEXT_GEN_PROMPT = """\
-{% if content_kind == "no_pii" %}
-Write a single realistic Swedish {{ text_type }} fragment in a {{ register }} register
-that contains ZERO personal data — no names, no personnummer, no addresses, no emails,
-no phone numbers, no bank/card/IBAN/IP/username/date-of-birth, nothing that identifies
-a person. Build it from impersonal content instead: figures, totals, amounts, product
-or policy text, general descriptions, and order/reference numbers that are clearly NOT
-personnummer (e.g. order/fakturanummer, artikelnummer, beloppsrader).
+You are about to write ONE Swedish text fragment for the TASK given at the END of
+this prompt. Read this reference first; everything here is the same for every
+fragment, so the only part that changes per request is the TASK at the bottom.
 
-LAYOUT for this fragment: {{ text_layout }}
-Keep the OCR-flattened surface style described for that layout, but populate it only with
-non-personal values (sums, quantities, dates that are not tied to a person's identity,
-policy clauses, product rows).
-
-Then return a JSON object with:
-  - text:     the fragment you wrote (preserve line breaks exactly)
-  - entities: a dict with EVERY label list EMPTY ([]) — there is no PII to label.
-  - records:  an empty list [].
-
-Labels:
+Labels (the PII categories you may tag):
   person, email, phone, address, personnummer, organisationsnummer, bank, date,
   url, health, religion_ethnicity, criminal, card_number, iban, ip_address,
   username, date_of_birth
 
-Hard rules:
-  1. Write Swedish (not English).
-  2. The text MUST contain no personal data whatsoever.
-  3. Every entity list in `entities` MUST be empty and `records` MUST be [].
-{% else %}
-Write a single realistic Swedish {{ text_type }} fragment in a {{ register }} register.
-The fragment MUST naturally use SOME of these seed PII values (pick at least 2, at most all):
-
-person:               {{ seed_person }}
-email:                {{ seed_email }}
-phone:                {{ seed_phone }}
-personnummer:         {{ seed_personnummer }}
-company name:         {{ seed_company.name }}
-organisationsnummer:  {{ seed_company.org_nr }}
-bankgiro:             {{ seed_company.bankgiro }}
-address (one line):   {{ seed_address.street_line }}
-address (postnr):     {{ seed_address.postnr }}
-address (city):       {{ seed_address.city }}
-date:                 {{ seed_date }}
-url:                  {{ seed_url }}
-health:               {{ seed_health }}
-religion/ethnicity:   {{ seed_religion_ethnicity }}
-criminal:             {{ seed_criminal }}
-card number:          {{ seed_card }}
-iban:                 {{ seed_iban }}
-ip address:           {{ seed_ip }}
-username:             {{ seed_username }}
-date of birth:        {{ seed_dob }}
-
-{% if num_subjects | int > 1 %}
-This fragment involves {{ num_subjects }} DIFFERENT people. Use ONLY these subjects, and
-never mix one person's identifier with another's:
-{% for s in seed_subjects %}
-  - {{ s.name }} · {{ s.personnummer }} · {{ s.email }} · {{ s.phone }} · {{ s.address }}
-{% endfor %}
-Lay them out as a {{ text_layout }} (a table or list — one row/line per person).
-Return one `records` entry per person, copying THAT person's fields verbatim from the text.
-Do NOT attach any health, criminal, or religion/ethnicity detail to anyone in this fragment.
-{% else %}
-Return exactly one `records` entry for {{ seed_person }}, listing the identifiers you used
-(personnummer/email/phone/address) verbatim. Health/criminal/religion stay out of `records`.
-{% endif %}
-
-LAYOUT for this fragment: {{ text_layout }}
-These non-prose layouts must read like the FLATTENED text an OCR engine dumps
-from a screenshot of a real Swedish form, table, ID card or bank statement —
-ragged, label-driven, no connecting sentences.
+Layouts — the TASK names ONE layout to use. The non-prose layouts must read like
+the FLATTENED text an OCR engine dumps from a screenshot of a real Swedish form,
+table, ID card or bank statement — ragged, label-driven, no connecting sentences.
   prose       → 1-3 narrative Swedish sentences, seeds woven in inline.
   key_value   → 4-7 "Fält: värde" lines exactly as exported from a Swedish form
                 (Skatteverket-blankett, kontoutdrag eller ID-kort), ONE field
@@ -126,29 +73,24 @@ ragged, label-driven, no connecting sentences.
   list        → A short bulleted list ("- " or "* ") with one PII fact per bullet.
                 Example: "- Patient: Sven Andersson\\n- Diagnos: diabetes typ 2"
 
-Then return a JSON object with:
-  - text:     the fragment you wrote (preserve line breaks exactly)
+Output — return a single JSON object:
+  - text:     the fragment you wrote (preserve line breaks exactly).
   - entities: a dict mapping every PII label you actually used to the list of
-              verbatim mentions in `text`. Labels you didn't use must be `[]`.
-  - records:  one entry per person, populated as instructed above. Each field
-              value MUST be a verbatim substring of `text`; non-sensitive
-              identifiers only (no health/criminal/religion_ethnicity).
-
-Labels:
-  person, email, phone, address, personnummer, organisationsnummer, bank, date,
-  url, health, religion_ethnicity, criminal, card_number, iban, ip_address,
-  username, date_of_birth
+              verbatim mentions in `text`; labels you didn't use must be `[]`.
+  - records:  a list of per-person identifier dicts (the TASK says how many).
+              Each field value MUST be a verbatim substring of `text`;
+              non-sensitive identifiers only (no health/criminal/religion_ethnicity).
 
 Hard rules:
   1. Write Swedish (not English). Names, street, city stay in their original form.
   2. Every mention must be a verbatim substring of `text` — no rephrasing.
-  3. Do not invent new PII values beyond the seeds.
+  3. Do not invent new PII values beyond the seeds given in the TASK.
   4. Address: write each person's address on ONE line exactly as given — do NOT
      split it into separate street/Ort lines. The address mention must appear as
      its own verbatim substring under `entities.address` (and verbatim in any
      `records` entry) so it stays matchable.
   5. Sensitive seeds (health, religion/ethnicity, criminal) MUST be woven in when
-     the {{ text_type }} naturally involves them (journalanteckning, LSS,
+     the requested text type naturally involves them (journalanteckning, LSS,
      biståndsbeslut, domstolsbeslut, polisanmälan) — surface them, do not skip
      them. Even so, never group more than one person by a sensitive attribute or
      by criminal history: at most ONE individual per fragment may carry a
@@ -161,26 +103,79 @@ Hard rules:
      several data rows, and a long value may wrap onto an indented next line;
      in every case each value (and each wrapped fragment) must still be a
      verbatim substring of `text` exactly as required by rule 2.
-  8. SEED AFFINITY: weave in EVERY seed the {{ text_type }} realistically
+  8. SEED AFFINITY: weave in EVERY seed the requested text type realistically
      contains — do not leave a relevant seed unused. In particular, never skip
      seed_card, seed_iban, seed_ip, seed_username, seed_dob,
-     seed_company.org_nr or seed_company.bankgiro when the {{ text_type }}
+     seed_company.org_nr or seed_company.bankgiro when the text type
      naturally carries them. Concrete genre→seed guidance:
        - A leverantörsfaktura / kontoutdrag (med kortköp) uses
          organisationsnummer + IBAN and/or bankgiro (and a card number for any
          card purchase), plus bank and date.
        - A kortbetalning / kortköp-kvitto / återbetalning / card receipt is
          settled by card, so the card number is REQUIRED: the fragment MUST
-         include a line like "Kortnummer: {{ seed_card }}" using the seed_card
-         value verbatim — do NOT invent, truncate or mask the digits — plus
+         include a line like "Kortnummer: <the card-number seed>" using the seed
+         card value verbatim — do NOT invent, truncate or mask the digits — plus
          date and bank/amount.
        - An inloggnings-/kontouppgifter or IT-supportärende (med loggrad) uses
          username + ip_address (and email).
        - An id-kort / körkort / Skatteverket-blankett uses date_of_birth (with
          address and personnummer).
-     These seeds still obey rules 2–3: use the seed value verbatim, invent
+     These seeds still obey rules 2-3: use the seed value verbatim, invent
      nothing beyond the seeds, and skip a seed only when it would be unnatural
-     for this {{ text_type }}.
+     for the requested text type.
+  9. If the TASK below asks for NO personal data, rules 4-8 do not apply: the
+     text MUST contain zero PII, every `entities` list MUST be empty, and
+     `records` MUST be [].
+
+──────────────────────────────────────────────────────────────────────────────
+TASK (the only part that changes per row):
+{% if content_kind == "no_pii" %}
+Write a single realistic Swedish {{ text_type }} fragment in a {{ register }}
+register, using the {{ text_layout }} layout, that contains ZERO personal data —
+no names, no personnummer, no addresses, no emails, no phone numbers, no
+bank/card/IBAN/IP/username/date-of-birth, nothing that identifies a person. Build
+it from impersonal content instead: figures, totals, amounts, product or policy
+text, general descriptions, and order/reference numbers that are clearly NOT
+personnummer (e.g. order/fakturanummer, artikelnummer, beloppsrader).
+Every list in `entities` MUST be empty ([]) and `records` MUST be [].
+{% else %}
+Write a single realistic Swedish {{ text_type }} fragment in a {{ register }}
+register, using the {{ text_layout }} layout. The fragment MUST naturally use SOME
+of these seed PII values (pick at least 2, at most all):
+
+person:               {{ seed_person }}
+email:                {{ seed_email }}
+phone:                {{ seed_phone }}
+personnummer:         {{ seed_personnummer }}
+company name:         {{ seed_company.name }}
+organisationsnummer:  {{ seed_company.org_nr }}
+bankgiro:             {{ seed_company.bankgiro }}
+address (one line):   {{ seed_address.street_line }}
+address (postnr):     {{ seed_address.postnr }}
+address (city):       {{ seed_address.city }}
+date:                 {{ seed_date }}
+url:                  {{ seed_url }}
+health:               {{ seed_health }}
+religion/ethnicity:   {{ seed_religion_ethnicity }}
+criminal:             {{ seed_criminal }}
+card number:          {{ seed_card }}
+iban:                 {{ seed_iban }}
+ip address:           {{ seed_ip }}
+username:             {{ seed_username }}
+date of birth:        {{ seed_dob }}
+{% if num_subjects | int > 1 %}
+This fragment involves {{ num_subjects }} DIFFERENT people. Use ONLY these subjects, and
+never mix one person's identifier with another's:
+{% for s in seed_subjects %}
+  - {{ s.name }} · {{ s.personnummer }} · {{ s.email }} · {{ s.phone }} · {{ s.address }}
+{% endfor %}
+Lay them out as a {{ text_layout }} (a table or list — one row/line per person).
+Return one `records` entry per person, copying THAT person's fields verbatim from the text.
+Do NOT attach any health, criminal, or religion/ethnicity detail to anyone in this fragment.
+{% else %}
+Return exactly one `records` entry for {{ seed_person }}, listing the identifiers you used
+(personnummer/email/phone/address) verbatim. Health/criminal/religion stay out of `records`.
+{% endif %}
 {% endif %}
 """
 
@@ -192,8 +187,15 @@ You score the pair on Swedish quality, faithfulness to the seed PII values,
 and label completeness. Be honest — invented PII and missed mentions are serious defects.
 """
 
+# Constant rubric first (cacheable), the per-row sample (text/entities/seeds) last
+# — same prefix-cache rationale as TEXT_GEN_PROMPT above.
 PII_JUDGE_PROMPT = """\
-Evaluate this synthetic Swedish PII training sample.
+Evaluate the synthetic Swedish PII training sample shown at the END of this prompt.
+
+Hard rules:
+- Penalise text that is not natural Swedish or reads like a translation.
+- Penalise any PII in the text that is not present in <seeds_used>.
+- Penalise PII mentions visible in the text but missing from <entities>.
 
 <text>
 {{ text }}
@@ -218,11 +220,6 @@ health:               {{ seed_health }}
 religion_ethnicity:   {{ seed_religion_ethnicity }}
 criminal:             {{ seed_criminal }}
 </seeds_used>
-
-Hard rules:
-- Penalise text that is not natural Swedish or reads like a translation.
-- Penalise any PII in the text that is not present in <seeds_used>.
-- Penalise PII mentions visible in the text but missing from <entities>.
 """
 
 PII_JUDGE_SCORES = [
