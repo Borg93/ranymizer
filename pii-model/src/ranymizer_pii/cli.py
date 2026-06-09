@@ -183,6 +183,48 @@ def evaluate(
     )
 
 
+@app.command(name="eval-model")
+def eval_model(
+    checkpoint: str = typer.Option(
+        "fastino/gliner2-privacy-filter-PII-multi",
+        help="GLiNER2 checkpoint to score (HF id or local dir).",
+    ),
+    data: Path = typer.Option(
+        Path("data"), help="Dir holding the gold test.jsonl (from `convert`)."
+    ),
+    adapter: Path | None = typer.Option(
+        None, help="Optional LoRA adapter dir, e.g. outputs/checkpoints/lora_se/final."
+    ),
+    threshold: float = typer.Option(0.5, help="Span confidence threshold."),
+    out: Path = typer.Option(Path("outputs"), help="Where to write the JSON report."),
+) -> None:
+    """Score a GLiNER2 model: span-level NER precision/recall/F1 on the test split.
+
+    Measures the MODEL (vs `evaluate`, which judges the DATA). Run it on the
+    off-the-shelf checkpoint and again with --adapter to compare before/after.
+    """
+    from ranymizer_trainer.eval import evaluate_checkpoint
+
+    report = evaluate_checkpoint(
+        checkpoint,
+        data / "test.jsonl",
+        adapter=str(adapter) if adapter else None,
+        threshold=threshold,
+    )
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "model_ner_eval.json").write_text(report.model_dump_json(indent=2))
+    console.print(
+        f"[bold]{report.checkpoint}[/bold]  ({report.num_examples} test rows)\n"
+        f"micro P/R/F1 = {report.micro_precision:.3f} / {report.micro_recall:.3f} / "
+        f"{report.micro_f1:.3f}   macro F1 = {report.macro_f1:.3f}"
+    )
+    for s in report.per_label[:12]:
+        console.print(
+            f"  {s.label:20s} P={s.precision:.2f} R={s.recall:.2f} "
+            f"F1={s.f1:.2f}  (support={s.support})"
+        )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
