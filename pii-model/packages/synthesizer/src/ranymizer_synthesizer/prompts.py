@@ -75,8 +75,10 @@ table, ID card or bank statement — ragged, label-driven, no connecting sentenc
 
 Output — return a single JSON object:
   - text:     the fragment you wrote (preserve line breaks exactly).
-  - entities: a dict mapping every PII label you actually used to the list of
-              verbatim mentions in `text`; labels you didn't use must be `[]`.
+  - entities: a LIST with one entry per PII label that OCCURS in `text`. Each
+              entry is {"label": <one label>, "mentions": [verbatim substrings]}.
+              Include ONLY labels that occur — OMIT every label you did not use
+              (do not add entries with empty mentions).
   - records:  a list of per-person identifier dicts (the TASK says how many).
               Each field value MUST be a verbatim substring of `text`;
               non-sensitive identifiers only (no health/criminal/religion_ethnicity).
@@ -124,7 +126,7 @@ Hard rules:
      nothing beyond the seeds, and skip a seed only when it would be unnatural
      for the requested text type.
   9. If the TASK below asks for NO personal data, rules 4-8 do not apply: the
-     text MUST contain zero PII, every `entities` list MUST be empty, and
+     text MUST contain zero PII, `entities` MUST be an empty list [], and
      `records` MUST be [].
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -137,7 +139,7 @@ bank/card/IBAN/IP/username/date-of-birth, nothing that identifies a person. Buil
 it from impersonal content instead: figures, totals, amounts, product or policy
 text, general descriptions, and order/reference numbers that are clearly NOT
 personnummer (e.g. order/fakturanummer, artikelnummer, beloppsrader).
-Every list in `entities` MUST be empty ([]) and `records` MUST be [].
+`entities` MUST be an empty list [] and `records` MUST be [].
 {% else %}
 Write a single realistic Swedish {{ text_type }} fragment in a {{ register }}
 register, using the {{ text_layout }} layout. The fragment MUST naturally use SOME

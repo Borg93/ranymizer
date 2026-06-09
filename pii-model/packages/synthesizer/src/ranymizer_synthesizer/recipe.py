@@ -60,7 +60,7 @@ from .seeds import (
     gen_seed_subjects,
     gen_seed_username,
 )
-from .validators import validate_entities, validate_records
+from .validators import flatten_entities, validate_entities, validate_records
 
 
 def build_recipe(
@@ -264,6 +264,12 @@ def _add_generation_columns(
             # into a separate column keeps NDD from mistaking it for the
             # structured response.
             extract_reasoning_content=True,
+            # Helper column: text/entities/records are flattened out of it below,
+            # so drop it from the written dataset. Critical for the sparse
+            # entities schema — its nested `entities` dict has varying keys (and is
+            # {} on no-PII rows), which pyarrow cannot persist as a struct; the
+            # flattened columns are scalars/strings and store cleanly.
+            drop=True,
         )
     )
 
@@ -272,7 +278,7 @@ def _add_generation_columns(
         dd.ExpressionColumnConfig(name="text", expr="{{ generation.text }}")
     )
     config_builder.add_column(
-        dd.ExpressionColumnConfig(name="entities", expr="{{ generation.entities }}")
+        dd.CustomColumnConfig(name="entities", generator_function=flatten_entities)
     )
     config_builder.add_column(
         dd.ExpressionColumnConfig(name="records", expr="{{ generation.records }}")

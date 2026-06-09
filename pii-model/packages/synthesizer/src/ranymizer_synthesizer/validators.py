@@ -14,6 +14,26 @@ import json
 import data_designer.config as dd
 from ranymizer_pii_core import PERSON_IDENTIFIER_FIELDS
 
+from .schema import canonical_sparse_entities
+
+
+@dd.custom_column_generator(required_columns=["generation"])
+def flatten_entities(row: dict) -> dict:
+    """Flatten ``generation.entities`` into a canonical SPARSE JSON-string column.
+
+    The LLM emits a free, sparse ``{label: mentions}`` object (only the labels it
+    used — fewer decode tokens). We serialise it to a JSON string in Python rather
+    than via a Jinja `{{ generation.entities }}` expression because NDD infers a
+    parquet *struct* from a dict column, which fails on the empty / no-PII rows
+    ("Cannot write struct type 'entities' with no child field"). A string column
+    is stable, and every consumer already parses it back via ``ast.literal_eval``
+    / ``json.loads``.
+    """
+    gen = row.get("generation")
+    raw = gen.get("entities") if isinstance(gen, dict) else getattr(gen, "entities", None)
+    row["entities"] = json.dumps(canonical_sparse_entities(raw), ensure_ascii=False)
+    return row
+
 
 def _parse_entities(value: str) -> object:
     """Parse the entities cell tolerating both JSON and Python-repr strings.
