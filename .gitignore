@@ -127,3 +127,8 @@ huggingface/
 
 # ─── Misc ────────────────────────────────────────────────────────
 *.log
+
+# local Claude tooling & deepeval telemetry/cache — not project code
+.claude/
+.deepeval/
+**/.deepeval/
