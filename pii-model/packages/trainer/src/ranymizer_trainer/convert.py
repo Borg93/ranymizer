@@ -410,7 +410,7 @@ def convert(
     ocr_rate: float,
     ocr_seed: int,
     dedup_threshold: float | None = None,
-    dense_labels: bool = False,
+    dense_labels: bool = True,
 ) -> None:
     """Convert NDD parquet output into GLiNER2 train/val/test JSONL + dataset card.
 

@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 def train(
     *,
     mode: TrainMode = TrainMode.LORA,
-    base_model: str = "fastino/gliner2-base-v1",
+    base_model: str = "fastino/gliner2-privacy-filter-PII-multi",
     data_dir: Path,
     output_dir: Path | None = None,
     num_epochs: int = 10,

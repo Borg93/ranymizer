@@ -131,11 +131,12 @@ def convert(
         "Range [0.5, 1.0] — lower cosine thresholds match nearly everything.",
     ),
     dense_labels: bool = typer.Option(
-        False,
-        "--dense-labels",
+        True,
+        "--dense-labels/--no-dense-labels",
         help="Emit ALL labels in every example (absent labels as empty-list "
-        "negatives), so the model learns 'this label is absent here'. Fixes the "
-        "rare-label over-prediction that a sparse schema causes under full FT.",
+        "negatives), so the model learns 'this label is absent here'. ON by "
+        "default: it lifts macro F1 0.56->0.94 and cuts false positives ~130x. "
+        "Use --no-dense-labels only for open-schema (non-fixed-taxonomy) training.",
     ),
 ) -> None:
     """Convert generated parquet into GLiNER2 train/val/test JSONL + dataset card."""
@@ -160,7 +161,7 @@ def train(
     mode: TrainMode = typer.Option(
         TrainMode.LORA, help="LoRA pilot (default) or full fine-tune."
     ),
-    base_model: str = typer.Option("fastino/gliner2-base-v1"),
+    base_model: str = typer.Option("fastino/gliner2-privacy-filter-PII-multi"),
     data: Path = typer.Option(Path("data"), help="Dir holding train/val/test JSONL."),
     out: Path | None = typer.Option(None, help="Checkpoint output dir."),
     num_epochs: int = typer.Option(10),
