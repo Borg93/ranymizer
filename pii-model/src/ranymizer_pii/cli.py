@@ -215,6 +215,18 @@ def eval_model(
     ),
     threshold: float = typer.Option(0.5, help="Span confidence threshold."),
     out: Path = typer.Option(Path("outputs"), help="Where to write the JSON report."),
+    tune: bool = typer.Option(
+        False,
+        "--tune",
+        help="Calibrate a per-label threshold on val.jsonl (GLiNER2-PII paper) "
+        "and report test at fixed-0.5 vs tuned, to lift precision.",
+    ),
+    fbeta: float = typer.Option(
+        1.0,
+        "--fbeta",
+        min=0.1,
+        help="F-beta objective for --tune; >1 favours recall (redaction default).",
+    ),
 ) -> None:
     """Score a GLiNER2 model: span-level NER precision/recall/F1 on the test split.
 
@@ -222,6 +234,37 @@ def eval_model(
     off-the-shelf checkpoint and again with --adapter to compare before/after.
     """
     from ranymizer_trainer.eval import evaluate_checkpoint
+
+    if tune:
+        from ranymizer_trainer.eval import evaluate_checkpoint_tuned
+
+        fixed, tuned = evaluate_checkpoint_tuned(
+            checkpoint,
+            data / "val.jsonl",
+            data / "test.jsonl",
+            adapter=str(adapter) if adapter else None,
+            beta=fbeta,
+        )
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "model_ner_eval.json").write_text(tuned.model_dump_json(indent=2))
+        (out / "model_ner_eval_fixed0.5.json").write_text(
+            fixed.model_dump_json(indent=2)
+        )
+        console.print(
+            f"[bold]{tuned.checkpoint}[/bold]  ({tuned.num_examples} test rows)  "
+            f"per-label thresholds tuned on val (F{fbeta:g})\n"
+            f"  fixed 0.5 : micro P/R/F1 = {fixed.micro_precision:.3f} / "
+            f"{fixed.micro_recall:.3f} / {fixed.micro_f1:.3f}  macro {fixed.macro_f1:.3f}\n"
+            f"  tuned     : micro P/R/F1 = {tuned.micro_precision:.3f} / "
+            f"{tuned.micro_recall:.3f} / {tuned.micro_f1:.3f}  macro {tuned.macro_f1:.3f}"
+        )
+        for s in tuned.per_label[:14]:
+            thr = (tuned.per_label_thresholds or {}).get(s.label, 0.5)
+            console.print(
+                f"  {s.label:20s} thr={thr:.2f}  P={s.precision:.2f} R={s.recall:.2f} "
+                f"F1={s.f1:.2f}  (support={s.support})"
+            )
+        return
 
     report = evaluate_checkpoint(
         checkpoint,
