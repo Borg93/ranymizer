@@ -41,13 +41,29 @@ class DedupResult(BaseModel):
 
 
 def embed_texts(texts: Sequence[str], endpoint: EmbeddingEndpoint) -> np.ndarray:
-    """Return L2-normalised embeddings (so a dot product is the cosine similarity)."""
+    """Return L2-normalised embeddings (so a dot product is the cosine similarity).
+
+    Raises:
+        ValueError: if the endpoint returns a wrong-sized batch — a truncated
+            response would otherwise silently misalign embeddings with texts.
+    """
+    if not texts:
+        return np.zeros((0, 0), dtype=np.float32)
     client = OpenAI(base_url=endpoint.base_url, api_key=endpoint.api_key)
     vectors: list[list[float]] = []
     for start in range(0, len(texts), endpoint.batch_size):
         chunk = list(texts[start : start + endpoint.batch_size])
         response = client.embeddings.create(model=endpoint.model, input=chunk)
-        vectors.extend(item.embedding for item in response.data)
+        if len(response.data) != len(chunk):
+            raise ValueError(
+                f"embedding endpoint returned {len(response.data)} vectors for "
+                f"{len(chunk)} inputs (batch at offset {start})"
+            )
+        # The API ties each vector to its input via `index`; response order is
+        # not guaranteed (continuous batching), so sort before extending.
+        vectors.extend(
+            item.embedding for item in sorted(response.data, key=lambda d: d.index)
+        )
     arr = np.asarray(vectors, dtype=np.float32)
     norms = np.linalg.norm(arr, axis=1, keepdims=True)
     return arr / np.clip(norms, 1e-12, None)
@@ -77,7 +93,14 @@ def dedup_texts(
     endpoint: EmbeddingEndpoint | None = None,
     threshold: float = 0.95,
 ) -> tuple[np.ndarray, DedupResult]:
-    """Embed ``texts`` and return ``(keep_mask, DedupResult)`` for semantic near-dups."""
+    """Embed ``texts`` and return ``(keep_mask, DedupResult)`` for semantic near-dups.
+
+    Raises:
+        ValueError: if ``threshold`` is outside ``(0, 1]`` — at 0 (or below)
+            every later row matches the first and the dataset silently collapses.
+    """
+    if not 0.0 < threshold <= 1.0:
+        raise ValueError(f"dedup threshold must be in (0, 1], got {threshold}")
     endpoint = endpoint or EmbeddingEndpoint()
     embeddings = embed_texts(texts, endpoint)
     keep = near_dup_keep_mask(embeddings, threshold)

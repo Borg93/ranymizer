@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, cast
 
@@ -139,19 +140,47 @@ def _coerce_entities(value: object) -> dict[str, list[str]]:
 
 
 def _append_scalar(value: object, out: list[str]) -> None:
-    """Append a single non-empty, non-NaN stringified PII value."""
+    """Append a single non-empty stringified PII value.
+
+    Skips float NaN (pandas renders a missing seed cell as ``float("nan")``) by
+    type, not by its string form — a legitimate value that merely *reads* as
+    "nan" (e.g. a username) must stay in the grounding context.
+    """
+    if isinstance(value, float) and math.isnan(value):
+        return
     text = str(value).strip()
-    if text and text.lower() != "nan":
+    if text:
         out.append(text)
+
+
+def _container_from_str(value: str) -> object | None:
+    """Parse a string that encodes a JSON / Python-repr container, else ``None``.
+
+    Parquet/JSONL round-trips can deliver ``seed_subjects`` (and the dict seeds)
+    as their *serialised string* form; treating that blob as one scalar would
+    hide every subject's PII from the grounding context.
+    """
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{(":
+        return None
+    for parse in (json.loads, ast.literal_eval):
+        try:
+            parsed = parse(stripped)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(parsed, (dict, list, tuple)):
+            return parsed
+    return None
 
 
 def _flatten_seed(value: object, out: list[str]) -> None:
     """Recursively collect scalar PII strings from one seed cell into ``out``.
 
-    Handles scalars, dicts / pydantic models (CompanySeed, address), and
-    iterables — notably ``seed_subjects`` (a list/ndarray of per-person dicts on
-    multi-subject rows), whose every value must count as ground-truth PII.
-    ``str``/``bytes`` are scalars and must be checked before the iterable branch.
+    Handles scalars, dicts / pydantic models (CompanySeed, address), iterables —
+    notably ``seed_subjects`` (a list/ndarray of per-person dicts on
+    multi-subject rows) — and their serialised string forms, whose every value
+    must count as ground-truth PII. ``str``/``bytes`` are scalars and must be
+    checked before the iterable branch.
     """
     if value is None:
         return
@@ -163,8 +192,15 @@ def _flatten_seed(value: object, out: list[str]) -> None:
         for sub in value.values():
             _flatten_seed(sub, out)
         return
-    if isinstance(value, (str, bytes)):
+    if isinstance(value, bytes):
         _append_scalar(value, out)
+        return
+    if isinstance(value, str):
+        container = _container_from_str(value)
+        if container is None:
+            _append_scalar(value, out)
+            return
+        _flatten_seed(container, out)
         return
     if isinstance(value, Iterable):
         for item in cast("Iterable[object]", value):

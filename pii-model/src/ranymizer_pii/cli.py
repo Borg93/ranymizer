@@ -124,8 +124,11 @@ def convert(
     dedup_threshold: float | None = typer.Option(
         None,
         "--dedup-threshold",
+        min=0.5,
+        max=1.0,
         help="If set (e.g. 0.97), drop semantic near-duplicate texts via the local "
-        "embedding endpoint (:8001) before splitting. Off by default.",
+        "embedding endpoint (:8001) before splitting. Off by default. "
+        "Range [0.5, 1.0] — lower cosine thresholds match nearly everything.",
     ),
 ) -> None:
     """Convert generated parquet into GLiNER2 train/val/test JSONL + dataset card."""

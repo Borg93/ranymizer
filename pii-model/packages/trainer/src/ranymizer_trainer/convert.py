@@ -348,7 +348,14 @@ def _drop_semantic_near_dups(df: pd.DataFrame, threshold: float) -> pd.DataFrame
     embeds each row's text and greedily keeps the first of every near-dup
     cluster. Opt-in: the embedding endpoint must be running — if it is not, the
     rows pass through unchanged rather than failing the whole convert.
+
+    Raises:
+        ValueError: if ``threshold`` is outside ``[0.5, 1.0]`` — a low cosine
+            threshold matches nearly everything and would silently collapse the
+            dataset to a handful of rows.
     """
+    if not 0.5 <= threshold <= 1.0:
+        raise ValueError(f"--dedup-threshold must be in [0.5, 1.0], got {threshold}")
     if "text" not in df.columns or df.empty:
         return df
 
@@ -359,7 +366,9 @@ def _drop_semantic_near_dups(df: pd.DataFrame, threshold: float) -> pd.DataFrame
     texts = df["text"].astype(str).tolist()
     try:
         keep_mask, result = dedup_texts(texts, threshold=threshold)
-    except OpenAIError as exc:
+    except (OpenAIError, ValueError) as exc:
+        # ValueError = malformed endpoint response (wrong-sized batch); same
+        # degraded mode as endpoint-down: keep all rows rather than fail convert.
         log.warning(f"  Semantic dedup skipped — embedding endpoint error: {exc}")
         return df
     log.info(
