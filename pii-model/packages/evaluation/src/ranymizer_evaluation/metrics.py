@@ -65,6 +65,14 @@ SEED_FIELDS: tuple[str, ...] = (
     "seed_health",
     "seed_religion_ethnicity",
     "seed_criminal",
+    "seed_card",
+    "seed_iban",
+    "seed_ip",
+    "seed_username",
+    "seed_dob",
+    # Multi-subject rows carry the *other* people's PII here (a list of per-person
+    # dicts). Omitting it made `seed_grounding` flag those subjects as "invented".
+    "seed_subjects",
 )
 
 
@@ -130,23 +138,46 @@ def _coerce_entities(value: object) -> dict[str, list[str]]:
     }
 
 
+def _append_scalar(value: object, out: list[str]) -> None:
+    """Append a single non-empty, non-NaN stringified PII value."""
+    text = str(value).strip()
+    if text and text.lower() != "nan":
+        out.append(text)
+
+
+def _flatten_seed(value: object, out: list[str]) -> None:
+    """Recursively collect scalar PII strings from one seed cell into ``out``.
+
+    Handles scalars, dicts / pydantic models (CompanySeed, address), and
+    iterables — notably ``seed_subjects`` (a list/ndarray of per-person dicts on
+    multi-subject rows), whose every value must count as ground-truth PII.
+    ``str``/``bytes`` are scalars and must be checked before the iterable branch.
+    """
+    if value is None:
+        return
+    if isinstance(value, BaseModel):
+        for sub in value.model_dump().values():
+            _flatten_seed(sub, out)
+        return
+    if isinstance(value, dict):
+        for sub in value.values():
+            _flatten_seed(sub, out)
+        return
+    if isinstance(value, (str, bytes)):
+        _append_scalar(value, out)
+        return
+    if isinstance(value, Iterable):
+        for item in cast("Iterable[object]", value):
+            _flatten_seed(item, out)
+        return
+    _append_scalar(value, out)
+
+
 def _seed_values(row: dict) -> list[str]:
     """Flatten the row's seed columns into a list of ground-truth PII strings."""
     out: list[str] = []
     for field in SEED_FIELDS:
-        value = row.get(field)
-        if value is None or value == "":
-            continue
-        if isinstance(value, dict):
-            for sub in value.values():
-                if sub not in (None, ""):
-                    out.append(str(sub))
-        elif hasattr(value, "model_dump"):  # pydantic CompanySeed etc.
-            for sub in value.model_dump().values():
-                if sub not in (None, ""):
-                    out.append(str(sub))
-        else:
-            out.append(str(value))
+        _flatten_seed(row.get(field), out)
     return out
 
 

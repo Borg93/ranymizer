@@ -221,6 +221,17 @@ url:                  {{ seed_url }}
 health:               {{ seed_health }}
 religion_ethnicity:   {{ seed_religion_ethnicity }}
 criminal:             {{ seed_criminal }}
+card_number:          {{ seed_card }}
+iban:                 {{ seed_iban }}
+ip_address:           {{ seed_ip }}
+username:             {{ seed_username }}
+date_of_birth:        {{ seed_dob }}
+{% if num_subjects | int > 1 %}
+other subjects (one row may list several people — every field below is a valid seed):
+{% for s in seed_subjects %}
+  - {{ s.name }} · {{ s.personnummer }} · {{ s.email }} · {{ s.phone }} · {{ s.address }}
+{% endfor %}
+{% endif %}
 </seeds_used>
 """
 
