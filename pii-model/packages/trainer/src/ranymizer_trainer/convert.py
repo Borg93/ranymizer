@@ -259,11 +259,27 @@ def _tasks_from_records(
     return (structures or None), (relations or None)
 
 
+def _densify(entities: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Expand sparse entities to the full label taxonomy.
+
+    Present labels keep their mentions; every absent label becomes an explicit
+    empty list — a queried-but-absent NEGATIVE. A sparse schema only ever shows
+    the model present labels, so it never learns "this label is absent here";
+    full fine-tuning then overwrites the base checkpoint's calibration and
+    over-predicts rare labels. Densifying restores that signal (and turns no-PII
+    rows, which a sparse schema drops from the NER task entirely, into full
+    negatives).
+    """
+    return {label: entities.get(label, []) for label in LABELS}
+
+
 def _example_from(
     text: str,
     cleaned: dict[str, list[str]],
     seed_company: object,
     records: list[dict] | None = None,
+    *,
+    dense_labels: bool = False,
 ) -> InputExample:
     """Assemble the four-task InputExample from already-cleaned entities.
 
@@ -294,17 +310,20 @@ def _example_from(
         pairs = derive_belongs_to(text, cleaned)
         relations = [Relation("belongs_to", head=h, tail=t) for h, t in pairs] or None
 
+    ents = _densify(cleaned) if dense_labels else cleaned
     return InputExample(
         text=text,
-        entities=cleaned or None,
-        entity_descriptions={k: LABEL_DESCRIPTIONS[k] for k in cleaned} or None,
+        entities=ents or None,
+        entity_descriptions={k: LABEL_DESCRIPTIONS[k] for k in ents} or None,
         classifications=classifications,
         structures=structures,
         relations=relations,
     )
 
 
-def _row_to_example(row: pd.Series) -> InputExample | None:
+def _row_to_example(
+    row: pd.Series, *, dense_labels: bool = False
+) -> InputExample | None:
     """Clean (no-noise) multi-task example for a recipe row, or None if empty.
 
     All four task families of a row stay in one example, and the row's clean +
@@ -319,11 +338,13 @@ def _row_to_example(row: pd.Series) -> InputExample | None:
     records = (
         _coerce_records(row.get("records")) if row.get("records_validated") else []
     )
-    return _example_from(text, cleaned, row.get("seed_company"), records)
+    return _example_from(
+        text, cleaned, row.get("seed_company"), records, dense_labels=dense_labels
+    )
 
 
 def _ocr_example(
-    row: pd.Series, rng: random.Random, rate: float
+    row: pd.Series, rng: random.Random, rate: float, *, dense_labels: bool = False
 ) -> InputExample | None:
     """OCR-noised augmentation of a row — clean+noised doubles NER/KIE robustness.
 
@@ -338,7 +359,7 @@ def _ocr_example(
         return None
     cleaned = _clean_entities(text, row.get("entities"))
     noised_text, noised_entities = ocr_noise(text, cleaned, rng, rate=rate)
-    return _example_from(noised_text, noised_entities, None)
+    return _example_from(noised_text, noised_entities, None, dense_labels=dense_labels)
 
 
 def _drop_semantic_near_dups(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
@@ -389,6 +410,7 @@ def convert(
     ocr_rate: float,
     ocr_seed: int,
     dedup_threshold: float | None = None,
+    dense_labels: bool = False,
 ) -> None:
     """Convert NDD parquet output into GLiNER2 train/val/test JSONL + dataset card.
 
@@ -436,18 +458,23 @@ def convert(
             train_ratio=train_ratio,
             val_ratio=val_ratio,
         )
-        ex = _row_to_example(row)
+        ex = _row_to_example(row, dense_labels=dense_labels)
         if ex is not None:
             buckets[split].append(ex)
             n_clean += 1
         if rng is not None:
-            ocr_ex = _ocr_example(row, rng, ocr_rate)
+            ocr_ex = _ocr_example(row, rng, ocr_rate, dense_labels=dense_labels)
             if ocr_ex is not None:
                 buckets[split].append(ocr_ex)
                 n_ocr += 1
     log.info(f"  Converted to {n_clean} gliner2 InputExamples.")
     if ocr_augment:
         log.info(f"  + {n_ocr} OCR-noised variants (rate={ocr_rate}).")
+    if dense_labels:
+        log.info(
+            f"  Dense labels ON: every example carries all {len(LABELS)} labels "
+            "(absent = [] negatives)."
+        )
 
     examples = buckets["train"] + buckets["val"] + buckets["test"]
     task_coverage = {

@@ -130,6 +130,13 @@ def convert(
         "embedding endpoint (:8001) before splitting. Off by default. "
         "Range [0.5, 1.0] — lower cosine thresholds match nearly everything.",
     ),
+    dense_labels: bool = typer.Option(
+        False,
+        "--dense-labels",
+        help="Emit ALL labels in every example (absent labels as empty-list "
+        "negatives), so the model learns 'this label is absent here'. Fixes the "
+        "rare-label over-prediction that a sparse schema causes under full FT.",
+    ),
 ) -> None:
     """Convert generated parquet into GLiNER2 train/val/test JSONL + dataset card."""
     from ranymizer_trainer.convert import convert as run_convert
@@ -144,6 +151,7 @@ def convert(
         ocr_rate=ocr_rate,
         ocr_seed=ocr_seed,
         dedup_threshold=dedup_threshold,
+        dense_labels=dense_labels,
     )
 
 
