@@ -121,6 +121,12 @@ def convert(
     ),
     ocr_rate: float = typer.Option(0.06),
     ocr_seed: int = typer.Option(1234),
+    dedup_threshold: float | None = typer.Option(
+        None,
+        "--dedup-threshold",
+        help="If set (e.g. 0.97), drop semantic near-duplicate texts via the local "
+        "embedding endpoint (:8001) before splitting. Off by default.",
+    ),
 ) -> None:
     """Convert generated parquet into GLiNER2 train/val/test JSONL + dataset card."""
     from ranymizer_trainer.convert import convert as run_convert
@@ -134,6 +140,7 @@ def convert(
         ocr_augment=ocr_augment,
         ocr_rate=ocr_rate,
         ocr_seed=ocr_seed,
+        dedup_threshold=dedup_threshold,
     )
 
 

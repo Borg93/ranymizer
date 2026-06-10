@@ -341,6 +341,34 @@ def _ocr_example(
     return _example_from(noised_text, noised_entities, None)
 
 
+def _drop_semantic_near_dups(df: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    """Drop semantic near-duplicate ``text`` rows via the local embedding endpoint.
+
+    Exact-match dedup misses LLM paraphrases (same scenario, reworded). This
+    embeds each row's text and greedily keeps the first of every near-dup
+    cluster. Opt-in: the embedding endpoint must be running — if it is not, the
+    rows pass through unchanged rather than failing the whole convert.
+    """
+    if "text" not in df.columns or df.empty:
+        return df
+
+    from openai import OpenAIError
+
+    from .curate import dedup_texts  # lazy: pulls openai + the :8001 endpoint
+
+    texts = df["text"].astype(str).tolist()
+    try:
+        keep_mask, result = dedup_texts(texts, threshold=threshold)
+    except OpenAIError as exc:
+        log.warning(f"  Semantic dedup skipped — embedding endpoint error: {exc}")
+        return df
+    log.info(
+        f"  Semantic dedup @ cos>={threshold}: kept {result.kept} / {result.total} "
+        f"(dropped {result.dropped})."
+    )
+    return df[keep_mask].reset_index(drop=True)
+
+
 def convert(
     *,
     raw_path: Path,
@@ -351,6 +379,7 @@ def convert(
     ocr_augment: bool,
     ocr_rate: float,
     ocr_seed: int,
+    dedup_threshold: float | None = None,
 ) -> None:
     """Convert NDD parquet output into GLiNER2 train/val/test JSONL + dataset card.
 
@@ -375,6 +404,11 @@ def convert(
         dropped = before - len(df)
         if dropped:
             log.info(f"  Dropped {dropped} exact-duplicate-text rows (near-dup).")
+
+    # SEMANTIC near-dup drop (opt-in) — catches paraphrase clusters the exact
+    # match above misses, so an over-sampled scenario can't dominate the splits.
+    if dedup_threshold is not None:
+        df = _drop_semantic_near_dups(df, dedup_threshold)
 
     test_ratio = 1.0 - train_ratio - val_ratio
 
