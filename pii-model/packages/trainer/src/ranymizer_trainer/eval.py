@@ -16,10 +16,23 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from gliner2 import GLiNER2
 from pydantic import BaseModel
 from ranymizer_pii_core import LABEL_NAMES
+
+
+class CandidateSpan(NamedTuple):
+    """A predicted mention (casefolded) and the model's confidence in it."""
+
+    mention: str
+    confidence: float
+
+
+type Mentions = set[str]  # casefolded gold mentions for one label
+type GoldRow = tuple[str, dict[str, Mentions]]  # (text, {label: gold mentions})
+type RowCandidates = dict[str, list[CandidateSpan]]  # one row's {label: candidates}
 
 
 class LabelScore(BaseModel):
@@ -56,9 +69,9 @@ def _prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
     return precision, recall, f1
 
 
-def _gold_from_jsonl(test_path: Path) -> list[tuple[str, dict[str, set[str]]]]:
+def _gold_from_jsonl(test_path: Path) -> list[GoldRow]:
     """Read ``test.jsonl`` into ``(text, {label: {casefolded mentions}})`` rows."""
-    rows: list[tuple[str, dict[str, set[str]]]] = []
+    rows: list[GoldRow] = []
     for line in test_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -176,8 +189,8 @@ def _predict_candidates(
     *,
     floor: float,
     batch_size: int,
-) -> list[dict[str, list[tuple[str, float]]]]:
-    """Per-row ``{label: [(casefolded_mention, confidence)]}`` at a low floor."""
+) -> list[RowCandidates]:
+    """Per-row ``{label: [CandidateSpan]}`` extracted once at a low floor."""
     preds = model.batch_extract_entities(
         list(texts),
         list(labels),
@@ -185,13 +198,15 @@ def _predict_candidates(
         include_confidence=True,
         batch_size=batch_size,
     )
-    rows: list[dict[str, list[tuple[str, float]]]] = []
+    rows: list[RowCandidates] = []
     for pred in preds:
         entities = pred.get("entities", {}) if isinstance(pred, dict) else {}
-        row: dict[str, list[tuple[str, float]]] = {}
+        row: RowCandidates = {}
         for label, items in entities.items():
             cand = [
-                (str(it["text"]).casefold(), float(it.get("confidence", 1.0)))
+                CandidateSpan(
+                    str(it["text"]).casefold(), float(it.get("confidence", 1.0))
+                )
                 for it in items
                 if isinstance(it, dict) and it.get("text")
             ]
@@ -202,15 +217,16 @@ def _predict_candidates(
 
 
 def _counts_at(
-    candidates: list[dict[str, list[tuple[str, float]]]],
-    gold_rows: list[tuple[str, dict[str, set[str]]]],
+    candidates: list[RowCandidates],
+    gold_rows: list[GoldRow],
+    *,
     label: str,
     threshold: float,
 ) -> tuple[int, int, int]:
     """Span-level (tp, fp, fn) for one label at one confidence threshold."""
     tp = fp = fn = 0
     for (_, gold), cand in zip(gold_rows, candidates, strict=True):
-        pred = {m for m, conf in cand.get(label, []) if conf >= threshold}
+        pred = {s.mention for s in cand.get(label, []) if s.confidence >= threshold}
         gold_set = gold.get(label, set())
         tp += len(gold_set & pred)
         fp += len(pred - gold_set)
@@ -225,8 +241,8 @@ def _fbeta(precision: float, recall: float, beta: float) -> float:
 
 
 def tune_thresholds(
-    candidates: list[dict[str, list[tuple[str, float]]]],
-    gold_rows: list[tuple[str, dict[str, set[str]]]],
+    candidates: list[RowCandidates],
+    gold_rows: list[GoldRow],
     *,
     labels: Sequence[str] = LABEL_NAMES,
     beta: float = 1.0,
@@ -240,7 +256,7 @@ def tune_thresholds(
     for label in labels:
         best_thr, best_score = 0.5, -1.0
         for thr in _GRID:
-            tp, fp, fn = _counts_at(candidates, gold_rows, label, thr)
+            tp, fp, fn = _counts_at(candidates, gold_rows, label=label, threshold=thr)
             precision, recall, _ = _prf(tp, fp, fn)
             score = _fbeta(precision, recall, beta)
             if score > best_score:
@@ -250,8 +266,8 @@ def tune_thresholds(
 
 
 def _report_from_candidates(
-    candidates: list[dict[str, list[tuple[str, float]]]],
-    gold_rows: list[tuple[str, dict[str, set[str]]]],
+    candidates: list[RowCandidates],
+    gold_rows: list[GoldRow],
     *,
     checkpoint_name: str,
     labels: Sequence[str],
@@ -262,7 +278,9 @@ def _report_from_candidates(
     gold_f1s: list[float] = []
     tot_tp = tot_fp = tot_fn = 0
     for label in labels:
-        tp, fp, fn = _counts_at(candidates, gold_rows, label, thresholds[label])
+        tp, fp, fn = _counts_at(
+            candidates, gold_rows, label=label, threshold=thresholds[label]
+        )
         tot_tp += tp
         tot_fp += fp
         tot_fn += fn
