@@ -7,7 +7,7 @@
  */
 import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 import { editor } from '$lib/state.svelte';
-import { DEFAULT_LABEL_RULES, EMPTY_LABEL_RULE } from '$lib/types';
+import { DEFAULT_LABEL_RULES, EMPTY_LABEL_RULE, MODEL_VARIANTS } from '$lib/types';
 import StageDot from './StageDot.svelte';
 
 let { selected }: NodeProps = $props();
@@ -56,6 +56,24 @@ const ruleCount = $derived(
   </div>
 
   <div class="flex flex-col gap-1.5 p-3">
+    <div class="text-[10.5px] text-muted-foreground">Model</div>
+    <div class="flex gap-1">
+      {#each MODEL_VARIANTS as variant (variant.id)}
+        <button
+          type="button"
+          title={variant.title}
+          data-active={cfg.modelName === variant.id}
+          onclick={() => {
+            cfg.modelName = variant.id;
+            editor.persistPipelineConfig();
+          }}
+          class="nodrag flex-1 rounded-sm border border-border bg-background/40 px-1 py-0.5 text-[9.5px] font-mono text-muted-foreground transition-colors hover:border-primary data-[active=true]:border-primary data-[active=true]:bg-primary/15 data-[active=true]:text-foreground"
+        >
+          {variant.label}
+        </button>
+      {/each}
+    </div>
+
     <div class="flex items-center justify-between text-[10.5px] text-muted-foreground">
       <span>Threshold</span>
       <span class="font-mono tabular-nums text-foreground">{cfg.threshold.toFixed(2)}</span>

@@ -22,6 +22,7 @@ Swedish data.
 from __future__ import annotations
 
 import random
+from datetime import date, timedelta
 
 import data_designer.config as dd
 from faker import Faker
@@ -235,6 +236,88 @@ def make_subject(locale: str | None = None) -> dict[str, str]:
 
 
 # =============================================================================
+# Passport / ID-document seeds (split name, passport number, TD3 MRZ)
+# =============================================================================
+
+_MONTHS_SV = ("JAN", "FEB", "MAR", "APR", "MAJ", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEC")
+_MONTHS_EN = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def _passport_date(d: date) -> str:
+    """Render a date the way a Swedish passport prints it: ``31 DEC/DEC 93``."""
+    return f"{d.day:02d} {_MONTHS_SV[d.month - 1]}/{_MONTHS_EN[d.month - 1]} {d.year % 100:02d}"
+
+
+def _mrz_fold(name: str) -> str:
+    """Uppercase + ASCII-fold a name to the MRZ alphabet (A-Z and ``<`` for spaces)."""
+    table = str.maketrans({"Å": "A", "Ä": "A", "Ö": "O", "É": "E", "Ü": "U", "-": "<", " ": "<"})
+    folded = name.upper().translate(table)
+    return "".join(ch for ch in folded if ("A" <= ch <= "Z") or ch == "<")
+
+
+def _mrz_check(field: str) -> str:
+    """ICAO 9303 check digit over an MRZ field (weights 7,3,1; ``<``=0, A=10)."""
+    weights = (7, 3, 1)
+    total = 0
+    for i, ch in enumerate(field):
+        if ch.isdigit():
+            value = int(ch)
+        elif ch == "<":
+            value = 0
+        else:
+            value = ord(ch) - 55  # A=10 … Z=35
+        total += value * weights[i % 3]
+    return str(total % 10)
+
+
+def make_passport() -> dict[str, str]:
+    """A Swedish passport's visible fields + a format-valid TD3 machine-readable zone.
+
+    ``last_name`` (surname) and ``first_name`` (given names) are split because a
+    passport prints them on separate lines. The ``mrz`` value is the two OCR-B
+    lines, with correct ICAO check digits so the format is realistic.
+    """
+    fake = _fake_for(FAKER_LOCALE)
+    surname = fake.last_name()
+    given = " ".join(fake.first_name() for _ in range(random.randint(1, 3)))
+    passport_number = f"{random.choice('ABCDEFGHKLMN')}{random.choice('ABCDEFGHKLMN')}{random.randint(1000000, 9999999)}"
+    dob = fake.date_of_birth(minimum_age=18, maximum_age=85)
+    issue = fake.date_between(start_date="-9y", end_date="-1y")
+    expiry = issue + timedelta(days=1826)  # ~5-year validity, leap-safe
+    sex = random.choice(("M", "F"))
+    personnummer = make_personnummer_any()
+
+    nat = "SWE"
+    line1 = (f"P<{nat}{_mrz_fold(surname)}<<{_mrz_fold(given)}" + "<" * 44)[:44]
+    num9 = (passport_number + "<" * 9)[:9]
+    dob6, exp6 = dob.strftime("%y%m%d"), expiry.strftime("%y%m%d")
+    opt = ("".join(ch for ch in personnummer if ch.isdigit()) + "<" * 14)[:14]
+    c_num, c_dob, c_exp, c_opt = (
+        _mrz_check(num9),
+        _mrz_check(dob6),
+        _mrz_check(exp6),
+        _mrz_check(opt),
+    )
+    composite = _mrz_check(num9 + c_num + dob6 + c_dob + exp6 + c_exp + opt + c_opt)
+    line2 = f"{num9}{c_num}{nat}{dob6}{c_dob}{sex}{exp6}{c_exp}{opt}{c_opt}{composite}"
+
+    return {
+        "last_name": surname,
+        "first_name": given,
+        "passport_number": passport_number,
+        "personnummer": personnummer,
+        "date_of_birth": _passport_date(dob),
+        "place_of_birth": fake.city(),
+        "date_issue": _passport_date(issue),
+        "date_expiry": _passport_date(expiry),
+        "authority": "POLISMYNDIGHETEN",
+        "nationality": "SVENSK/ SWEDISH",
+        "sex": f"{sex}/{sex}",
+        "mrz": f"{line1}\n{line2}",
+    }
+
+
+# =============================================================================
 # NDD row generators
 # =============================================================================
 #
@@ -320,6 +403,12 @@ def gen_seed_username(row: dict) -> dict:
 @dd.custom_column_generator(required_columns=["text_type"])
 def gen_seed_dob(row: dict) -> dict:
     row["seed_dob"] = make_dob()
+    return row
+
+
+@dd.custom_column_generator(required_columns=["text_type"])
+def gen_seed_passport(row: dict) -> dict:
+    row["seed_passport"] = make_passport()
     return row
 
 

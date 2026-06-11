@@ -279,7 +279,7 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     maxPixels: 0,
   },
   gliner: {
-    modelName: 'fastino/gliner2-privacy-filter-PII-multi',
+    modelName: 'baseline',
     threshold: 0.5,
     enabledLabels: [...DEFAULT_PII_LABELS],
     descriptions: { ...DEFAULT_LABEL_DESCRIPTIONS },
@@ -287,6 +287,16 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     customLabels: {},
   },
 };
+
+/** The PII model the backend runs. Maps 1:1 to `ModelVariant` in backend/app.py. */
+export type ModelVariant = 'baseline' | 'lora' | 'ft';
+
+/** Selectable PII models for the GLiNER node — label + one-line tooltip. */
+export const MODEL_VARIANTS: { id: ModelVariant; label: string; title: string }[] = [
+  { id: 'baseline', label: 'Base', title: 'Off-the-shelf privacy-filter (no fine-tuning)' },
+  { id: 'lora', label: 'LoRA', title: 'Privacy-filter + our Swedish dense LoRA adapter' },
+  { id: 'ft', label: 'FT', title: 'Full fine-tune of the privacy-filter base' },
+];
 
 /** One of the 8 anchor handles on a selected box: 4 corners + 4 edge mids. */
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';

@@ -132,3 +132,10 @@ huggingface/
 .claude/
 .deepeval/
 **/.deepeval/
+
+# Trained PII model artifacts (large; load locally)
+backend/models/
+
+# Experiment artifacts — eval reports, datasets, adapters. Kept local, never pushed.
+pii-model/experiments/
+pii-model/outputs/eval_10k/

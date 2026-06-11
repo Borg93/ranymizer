@@ -119,6 +119,34 @@ LABELS: tuple[PiiLabel, ...] = (
         sensitivity=Sensitivity.DIRECT,
         description="Suggested mention of a person's date of birth.",
     ),
+    # ID-document fields — passports, national ID cards, residence permits. The
+    # surname and given names sit on SEPARATE lines on a passport, so they are
+    # their own spans here (not nested inside `person`).
+    PiiLabel(
+        name="first_name",
+        sensitivity=Sensitivity.DIRECT,
+        description="Suggested mention of a person's given name(s) only (Förnamn), without the surname.",
+    ),
+    PiiLabel(
+        name="last_name",
+        sensitivity=Sensitivity.DIRECT,
+        description="Suggested mention of a person's family name / surname only (Efternamn), without given names.",
+    ),
+    PiiLabel(
+        name="passport_number",
+        sensitivity=Sensitivity.DIRECT,
+        description="Suggested mention of a passport or ID-document number (Passnr/Passport No), e.g. two letters then digits like AA2130525.",
+    ),
+    PiiLabel(
+        name="place_of_birth",
+        sensitivity=Sensitivity.DIRECT,
+        description="Suggested mention of a place of birth (Födelseort) — a city or locality where a person was born.",
+    ),
+    PiiLabel(
+        name="mrz",
+        sensitivity=Sensitivity.DIRECT,
+        description="Suggested mention of the machine-readable zone (MRZ) of a passport or ID card — the OCR-B lines packed with < fillers.",
+    ),
 )
 
 LABEL_NAMES: tuple[str, ...] = tuple(label.name for label in LABELS)

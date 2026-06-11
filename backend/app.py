@@ -11,6 +11,8 @@ Public surface:
 from __future__ import annotations
 
 import os
+from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -45,9 +47,47 @@ USE_TEXTLINE_ORIENTATION = _env_bool("USE_TEXTLINE_ORIENTATION", False)
 
 GLINER_MODEL = os.getenv("GLINER_MODEL", "fastino/gliner2-privacy-filter-PII-multi")
 
-# Swedish-specific identifiers (personnummer, organisationsnummer) need format
-# hints because the model has never seen those during training — zero-shot
-# until LoRA fine-tuning lands. Expect modest recall out of the box.
+_MODELS_DIR = Path(__file__).resolve().parent / "models"
+LORA_ADAPTER_PATH = _MODELS_DIR / "lora_pf"  # privacy-filter base + our dense LoRA
+FT_MODEL_PATH = _MODELS_DIR / "ft_pf"  # full fine-tune of the privacy-filter base
+
+
+class ModelVariant(StrEnum):
+    """Which Swedish-PII checkpoint to run. The frontend's ``modelName`` selects one."""
+
+    BASELINE = "baseline"  # off-the-shelf privacy-filter (no fine-tuning)
+    LORA = "lora"  # privacy-filter + our dense LoRA adapter (~0.99 on synthetic)
+    FT = "ft"  # full fine-tune of the privacy-filter base
+
+
+# The trained models (lora/ft) were fine-tuned conditioning on THESE Swedish label
+# names. Querying them with the English-canonical names below (phone_number,
+# bank_account) measurably hurt recall, so we always condition on the trained names
+# and remap the output to the canonical keys the frontend colours by.
+TRAINED_LABELS: dict[str, str] = {
+    "person": "An individual's name (given name + surname, or initials).",
+    "email": "An email address, e.g. firstname.lastname@example.se.",
+    "phone": "A phone number in Swedish or international format (+46, 070-..., 08-...).",
+    "address": "A street address: street name + number, postnummer, city.",
+    "personnummer": "A Swedish personal identity number (YYYYMMDD-XXXX or YYMMDD-XXXX).",
+    "organisationsnummer": "A Swedish organisation number (XXXXXX-XXXX).",
+    "bank": "Bank account information: bankgiro, plusgiro, IBAN, BIC, clearing+account.",
+    "date": "A calendar date in Swedish format (2024-05-20, 20 maj 2024, etc).",
+    "url": "A web URL (https://..., www...).",
+    "health": "Health data: diagnoses, medication, treatment, disability, sick leave, mental health.",
+    "religion_ethnicity": "Religious belief, philosophical conviction, ethnic origin, or trade-union membership.",
+    "criminal": "Criminal offences or convictions (GDPR Art. 10): misstanke, åtal, fällande dom, påföljd.",
+    "card_number": "A payment card PAN (primary account number).",
+    "iban": "A Swedish IBAN (international bank account number).",
+    "ip_address": "An IP address (IPv4 or IPv6).",
+    "username": "An account login handle (username).",
+    "date_of_birth": "A person's date of birth.",
+}
+
+# Trained label name -> the canonical key the frontend's CATEGORIES_META colours by.
+# Only the two that differ need an entry; everything else maps to itself.
+LABEL_ALIAS: dict[str, str] = {"phone": "phone_number", "bank": "bank_account"}
+
 PII_LABELS: dict[str, str] = {
     "person": "Full name of a person",
     "email": "Email address",
@@ -67,6 +107,8 @@ PII_LABELS: dict[str, str] = {
     # Slutrapport IMY-2024-5156, §4.3 and §6.3.
     "health": "Health information: diagnoses, medication, treatment, disability, sick leave, mental health",
     "religion_ethnicity": "Religious belief, philosophical conviction, ethnic origin, or trade-union membership",
+    "criminal": "Criminal offences or convictions (GDPR Art. 10)",
+    "date": "A calendar date",
 }
 
 CATEGORIES_META: dict[str, dict[str, str]] = {
@@ -85,11 +127,13 @@ CATEGORIES_META: dict[str, dict[str, str]] = {
     "username": {"color": "#64748b", "label": "Username"},
     "health": {"color": "#dc2626", "label": "Health"},
     "religion_ethnicity": {"color": "#7c3aed", "label": "Religion / ethnicity"},
+    "criminal": {"color": "#b91c1c", "label": "Criminal"},
+    "date": {"color": "#10b981", "label": "Date"},
 }
 
 
 _ocr_instance: PaddleOCR | None = None
-_gliner_instance: GLiNER2 | None = None
+_models: dict[ModelVariant, GLiNER2] = {}
 
 
 def get_ocr() -> PaddleOCR:
@@ -160,26 +204,45 @@ def get_ocr_for(
     return pipeline
 
 
-def get_gliner() -> GLiNER2:
-    global _gliner_instance
-    if _gliner_instance is not None:
-        return _gliner_instance
-
-    print(f"[pii] loading {GLINER_MODEL}")
+def _load_variant(variant: ModelVariant) -> GLiNER2:
+    """Build one GLiNER2 checkpoint. The base is shared by name, but each variant
+    gets its OWN instance so adapter state never leaks between requests."""
     kwargs: dict[str, Any] = {"map_location": "cuda" if HAS_CUDA else "cpu"}
-    if HAS_CUDA:
-        kwargs["quantize"] = True
-        kwargs["compile"] = _env_bool("GLINER_COMPILE", True)
+    if variant is ModelVariant.FT:
+        if not (FT_MODEL_PATH / "model.safetensors").exists():
+            raise FileNotFoundError(f"full-FT checkpoint missing at {FT_MODEL_PATH}")
+        print(f"[pii] loading FT checkpoint {FT_MODEL_PATH}")
+        model = GLiNER2.from_pretrained(str(FT_MODEL_PATH), **kwargs)
+    else:
+        print(f"[pii] loading {GLINER_MODEL} (variant={variant})")
+        model = GLiNER2.from_pretrained(GLINER_MODEL, **kwargs)
+        if variant is ModelVariant.LORA:
+            if not (LORA_ADAPTER_PATH / "adapter_config.json").exists():
+                raise FileNotFoundError(f"LoRA adapter missing at {LORA_ADAPTER_PATH}")
+            model.load_adapter(str(LORA_ADAPTER_PATH))
+    model.eval()
+    return model
 
-    _gliner_instance = GLiNER2.from_pretrained(GLINER_MODEL, **kwargs)
-    _gliner_instance.eval()
-    return _gliner_instance
+
+def get_gliner(variant: ModelVariant = ModelVariant.BASELINE) -> GLiNER2:
+    """Return the requested PII model, loading + caching it on first use.
+
+    Variants are cached as separate instances (cheap: mdeberta-base ~0.3-0.5 GB
+    each), so switching is instant after the first load and thread-safe — no
+    per-request adapter swapping.
+    """
+    cached = _models.get(variant)
+    if cached is not None:
+        return cached
+    model = _load_variant(variant)
+    _models[variant] = model
+    return model
 
 
 if _env_bool("LOAD_MODELS_ON_STARTUP", True):
     try:
         get_ocr()
-        get_gliner()
+        get_gliner(ModelVariant.BASELINE)  # lora/ft load lazily on first request
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] eager model load failed: {exc!r}")
 
@@ -374,23 +437,26 @@ def run_pii_analysis(
     labels: dict[str, str] | None = None,
     rules: dict[str, dict[str, Any]] | None = None,
     allowed_labels: set[str] | None = None,
+    variant: ModelVariant = ModelVariant.BASELINE,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Run GLiNER2 then apply per-label post-filters.
+    """Run the selected GLiNER2 ``variant`` then apply per-label post-filters.
 
-    - `labels` overrides the default PII_LABELS dict. Custom user labels
-      flow in here.
-    - `allowed_labels` (when provided) filters the model output to the
-      labels the request actually enabled.
+    - `variant` picks the checkpoint (baseline / lora / ft).
+    - `labels` is the dict the model conditions on; defaults to the trained
+      Swedish names (TRAINED_LABELS) that all three variants respond to best.
+    - output labels are remapped to the canonical frontend keys via LABEL_ALIAS
+      (e.g. ``phone`` -> ``phone_number``) before `allowed_labels`/`rules` apply.
+    - `allowed_labels` (canonical keys) filters to the labels the request enabled.
     - `rules` is the per-label post-filter map (regex / threshold / Luhn).
     """
     if not text or not text.strip():
         return text, []
 
-    label_dict = labels if labels is not None else PII_LABELS
+    label_dict = labels if labels is not None else TRAINED_LABELS
     if not label_dict:
         return text, []
 
-    model = get_gliner()
+    model = get_gliner(variant)
     with torch.inference_mode():
         result = model.extract_entities(
             text,
@@ -401,7 +467,8 @@ def run_pii_analysis(
         )
 
     spans: list[dict[str, Any]] = []
-    for label, entities in (result.get("entities") or {}).items():
+    for raw_label, entities in (result.get("entities") or {}).items():
+        label = LABEL_ALIAS.get(raw_label, raw_label)
         if allowed_labels is not None and label not in allowed_labels:
             continue
         rule = (rules or {}).get(label) or {}
@@ -415,6 +482,24 @@ def run_pii_analysis(
 
     spans.sort(key=lambda s: (s["start"], s["end"]))
     return text, spans
+
+
+def mask_text(text: str, spans: list[dict[str, Any]]) -> str:
+    """Redact every detected span in ``text`` with a ``[LABEL]`` placeholder.
+
+    Splices right-to-left so earlier character offsets stay valid, and skips a
+    span that overlaps one already replaced (keeps the right-most match).
+    """
+    ordered = sorted(spans, key=lambda s: s["start"])
+    masked = text
+    next_start = len(text)
+    for span in reversed(ordered):
+        start, end = int(span["start"]), int(span["end"])
+        if not 0 <= start < end <= len(text) or end > next_start:
+            continue
+        masked = masked[:start] + f"[{str(span['label']).upper()}]" + masked[end:]
+        next_start = start
+    return masked
 
 
 BOX_PADDING_PX = 2

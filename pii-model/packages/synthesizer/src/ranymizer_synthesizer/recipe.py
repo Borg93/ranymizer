@@ -54,6 +54,7 @@ from .seeds import (
     gen_seed_email,
     gen_seed_iban,
     gen_seed_ip,
+    gen_seed_passport,
     gen_seed_person,
     gen_seed_personnummer,
     gen_seed_phone,
@@ -199,6 +200,9 @@ def _add_seed_columns(
     )
     config_builder.add_column(
         dd.CustomColumnConfig(name="seed_dob", generator_function=gen_seed_dob)
+    )
+    config_builder.add_column(
+        dd.CustomColumnConfig(name="seed_passport", generator_function=gen_seed_passport)
     )
     config_builder.add_column(
         dd.CustomColumnConfig(

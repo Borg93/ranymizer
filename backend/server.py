@@ -28,12 +28,23 @@ from PIL import Image
 
 from app import (
     CATEGORIES_META,
-    PII_LABELS,
+    TRAINED_LABELS,
+    ModelVariant,
     map_spans_to_boxes,
+    mask_text,
     ocr_image,
     run_pii_analysis,
 )
 from schema import parse_config
+
+
+def _variant_from(model_name: str | None) -> ModelVariant:
+    """Map the request's ``modelName`` to a model variant; default to baseline."""
+    try:
+        return ModelVariant(model_name) if model_name else ModelVariant.BASELINE
+    except ValueError:
+        return ModelVariant.BASELINE
+
 
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
@@ -131,7 +142,9 @@ def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> Ite
             # labels (merged), filtered by `enabledLabels` if the client sent
             # an explicit selection.
             gliner_cfg = cfg.gliner
-            labels_dict = dict(PII_LABELS)
+            # Condition on the trained Swedish names (all variants respond to
+            # them best); output is remapped to canonical keys inside run_pii_analysis.
+            labels_dict = dict(TRAINED_LABELS)
             # Allow client to override default descriptions.
             for key, desc in gliner_cfg.descriptions.items():
                 if key in labels_dict and desc:
@@ -154,6 +167,7 @@ def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> Ite
                 labels=labels_dict if labels_dict else None,
                 rules=rules_dict,
                 allowed_labels=allowed,
+                variant=_variant_from(gliner_cfg.modelName),
             )
             if source_text != ocr["text"]:
                 spans = [s for s in spans if s["end"] <= len(ocr["text"])]
@@ -172,6 +186,35 @@ def anonymize_screenshot_api(image: FileData, config: dict | None = None) -> Ite
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         yield {"stage": "done", "error": f"{type(exc).__name__}: {exc}"}
+
+
+@server.api(name="anonymize_text")
+def anonymize_text_api(text: str, model: str | None = None, threshold: float = 0.5) -> dict:
+    """Detect + mask PII in raw Swedish text with the chosen model variant.
+
+    The plain-text path (no OCR) for comparing baseline / lora / ft directly.
+    Returns ``{model, text, spans, masked_text}``; ``model`` echoes the resolved
+    variant so the client can confirm the switch took effect.
+    """
+    try:
+        variant = _variant_from(model)
+        clean = text or ""
+        _, spans = run_pii_analysis(clean, threshold=threshold, variant=variant)
+        return {
+            "model": variant.value,
+            "text": clean,
+            "spans": spans,
+            "masked_text": mask_text(clean, spans),
+        }
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        return {
+            "error": f"{type(exc).__name__}: {exc}",
+            "model": model,
+            "text": text or "",
+            "spans": [],
+            "masked_text": text or "",
+        }
 
 
 # adapter-static emits build/index.html (SPA fallback) + build/_app/<chunks>.
